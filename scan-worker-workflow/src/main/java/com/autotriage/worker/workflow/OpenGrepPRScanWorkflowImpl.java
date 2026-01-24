@@ -3,8 +3,14 @@ package com.autotriage.worker.workflow;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
+import com.autotriage.common.activity.ScanActivities;
+import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.workflow.OpenGrepPRScanWorkflow;
+import io.temporal.activity.ActivityOptions;
+import io.temporal.common.RetryOptions;
 import io.temporal.workflow.Workflow;
+
+import java.time.Duration;
 
 public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
 
@@ -13,14 +19,94 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
 
     @Override
     public void startScan(ScanRequest request) {
-        status = new ScanStatus(request.getRunId(), ScanState.RUNNING, "Workflow started");
+        updateStatus(request.getRunId(), ScanState.RUNNING, "Workflow started");
         if (cancelRequested) {
-            status = new ScanStatus(request.getRunId(), ScanState.CANCELED, "Canceled before start");
+            updateStatus(request.getRunId(), ScanState.CANCELED, "Canceled before start");
             return;
         }
-        Workflow.getLogger(OpenGrepPRScanWorkflowImpl.class)
-                .info("Workflow stub completed for runId=" + request.getRunId());
-        status = new ScanStatus(request.getRunId(), ScanState.COMPLETED, "Workflow stub completed");
+
+        ScanActivities lightActivities = Workflow.newActivityStub(
+                ScanActivities.class,
+                ActivityOptions.newBuilder()
+                        .setTaskQueue("scan-light")
+                        .setStartToCloseTimeout(Duration.ofMinutes(5))
+                        .setRetryOptions(RetryOptions.newBuilder()
+                                .setInitialInterval(Duration.ofSeconds(2))
+                                .setMaximumInterval(Duration.ofMinutes(1))
+                                .setBackoffCoefficient(2.0)
+                                .setMaximumAttempts(6)
+                                .build())
+                        .build());
+
+        ScanActivities filterActivities = Workflow.newActivityStub(
+                ScanActivities.class,
+                ActivityOptions.newBuilder()
+                        .setTaskQueue("scan-filter")
+                        .setStartToCloseTimeout(Duration.ofMinutes(10))
+                        .setRetryOptions(RetryOptions.newBuilder()
+                                .setInitialInterval(Duration.ofSeconds(5))
+                                .setMaximumInterval(Duration.ofMinutes(2))
+                                .setBackoffCoefficient(2.0)
+                                .setMaximumAttempts(4)
+                                .build())
+                        .build());
+
+        ScanActivities openGrepActivities = Workflow.newActivityStub(
+                ScanActivities.class,
+                ActivityOptions.newBuilder()
+                        .setTaskQueue("scan-opengrep")
+                        .setStartToCloseTimeout(Duration.ofMinutes(30))
+                        .setHeartbeatTimeout(Duration.ofSeconds(30))
+                        .setRetryOptions(RetryOptions.newBuilder()
+                                .setInitialInterval(Duration.ofSeconds(10))
+                                .setMaximumInterval(Duration.ofMinutes(5))
+                                .setBackoffCoefficient(2.0)
+                                .setMaximumAttempts(3)
+                                .build())
+                        .build());
+
+        try {
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Resolving repository");
+            ArtifactRef source = lightActivities.resolveRepoSource(request);
+            if (cancelRequested) {
+                updateStatus(request.getRunId(), ScanState.CANCELED, "Canceled after repo resolve");
+                return;
+            }
+
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Fetching suppressions");
+            ArtifactRef suppressionBundle = lightActivities.fetchSuppressionBundle(request.getRepository(), request.getCommitSha());
+
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Verifying suppressions");
+            boolean verified = lightActivities.verifySuppressionSignature(suppressionBundle);
+            if (!verified) {
+                suppressionBundle = new ArtifactRef("none://suppressions", "suppression-bundle");
+            }
+            if (cancelRequested) {
+                updateStatus(request.getRunId(), ScanState.CANCELED, "Canceled after suppression verification");
+                return;
+            }
+
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Running OpenGrep");
+            ArtifactRef rawSarif = openGrepActivities.runOpenGrep(source, request.getRunId());
+            if (cancelRequested) {
+                updateStatus(request.getRunId(), ScanState.CANCELED, "Canceled after OpenGrep run");
+                return;
+            }
+
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Applying suppressions");
+            ArtifactRef finalSarif = filterActivities.applySuppressions(rawSarif, suppressionBundle);
+
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Uploading results");
+            lightActivities.uploadResults(request.getRunId(), finalSarif, rawSarif);
+
+            updateStatus(request.getRunId(), ScanState.RUNNING, "Computing verdict");
+            ScanStatus verdict = lightActivities.computeVerdict(request.getRunId(), finalSarif);
+            updateStatus(request.getRunId(), verdict.getState(), verdict.getMessage());
+        } catch (Exception e) {
+            Workflow.getLogger(OpenGrepPRScanWorkflowImpl.class)
+                    .error("Workflow failed for runId=" + request.getRunId(), e);
+            updateStatus(request.getRunId(), ScanState.FAILED, "Workflow failed: " + e.getClass().getSimpleName());
+        }
     }
 
     @Override
@@ -31,6 +117,10 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
     @Override
     public void cancelScan(String runId) {
         cancelRequested = true;
-        status = new ScanStatus(runId, ScanState.CANCELED, "Cancel requested");
+        updateStatus(runId, ScanState.CANCELED, "Cancel requested");
+    }
+
+    private void updateStatus(String runId, ScanState state, String message) {
+        status = new ScanStatus(runId, state, message);
     }
 }

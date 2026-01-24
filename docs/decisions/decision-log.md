@@ -31,3 +31,27 @@
 - **Rationale:** Optional TLS keeps local dev simple while still meeting production requirements by toggling environment configuration.
 - **Consequences:** Operators must explicitly enable TLS in production manifests; misconfiguration can lead to plaintext connections if env vars are missing.
 - **Date:** 2026-01-24
+
+## ADR-0005: Scan status source
+- **Context:** The Scan API must report status for in-flight scans without a backing database in Phase 2.
+- **Decision:** Use the Temporal workflow query as the source of truth for scan status; defer persistence to a database for later phases.
+- **Options considered:** (1) Workflow query-only, (2) Workflow + external DB projection, (3) DB-first with Temporal for orchestration only.
+- **Rationale:** Query-based status is immediately available without additional infrastructure, aligning with the incremental rollout plan.
+- **Consequences:** Status is volatile if workflows are evicted or histories are purged; future DB integration will require dual-write or async projection.
+- **Date:** 2026-01-24
+
+## ADR-0006: Activity retry policies by worker type
+- **Context:** The workflow executes light, filter, and heavy OpenGrep activities with different runtime profiles and failure modes.
+- **Decision:** Use more aggressive retries with exponential backoff for light activities, moderate retries for filter activities, and limited retries with heartbeats for heavy OpenGrep execution.
+- **Options considered:** (1) Uniform retry policy for all activities, (2) Per-activity tuned retry policies, (3) No retries with manual intervention.
+- **Rationale:** Tailoring retries balances throughput and cost: light tasks can be retried cheaply, while heavy tasks should fail fast and rely on heartbeats for progress.
+- **Consequences:** Retry configurations must be kept in sync with operational expectations; observability should track retries by task queue.
+- **Date:** 2026-01-24
+
+## ADR-0007: Fail-closed suppressions
+- **Context:** Suppression bundles may be missing or have invalid signatures, and the workflow must decide whether to apply them.
+- **Decision:** If suppression verification fails, treat suppressions as empty and continue (fail-closed).
+- **Options considered:** (1) Fail-closed (ignore invalid suppressions), (2) Fail-open (apply regardless), (3) Stop workflow on verification failure.
+- **Rationale:** Fail-closed ensures untrusted suppressions do not hide findings, while still allowing the scan to complete.
+- **Consequences:** Some runs may report more findings until suppression signatures are fixed; alerting should highlight verification failures.
+- **Date:** 2026-01-24
