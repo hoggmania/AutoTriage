@@ -1,28 +1,23 @@
-package com.autotriage.worker.workflow;
+package com.autotriage.api;
 
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
-import io.quarkus.runtime.StartupEvent;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowClientOptions;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
-import io.temporal.worker.Worker;
-import io.temporal.worker.WorkerFactory;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.inject.Produces;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
 
 import java.io.File;
 import java.util.Optional;
 
 @ApplicationScoped
-public class WorkflowWorkerBootstrap {
+public class TemporalClientProducer {
 
-    private static final Logger log = Logger.getLogger(WorkflowWorkerBootstrap.class);
-
-    @ConfigProperty(name = "temporal.target", defaultValue = "localhost:7233")
+    @ConfigProperty(name = "temporal.target")
     String target;
 
     @ConfigProperty(name = "temporal.namespace", defaultValue = "scan-platform")
@@ -41,18 +36,17 @@ public class WorkflowWorkerBootstrap {
     Optional<String> serverCaPath;
 
     private WorkflowServiceStubs serviceStubs;
-    private WorkerFactory workerFactory;
 
-    void onStart(@Observes StartupEvent event) {
-        log.infov("Workflow worker starting on queue scan-workflows");
-        serviceStubs = WorkflowServiceStubs.newServiceStubs(buildServiceOptions());
-        WorkflowClient client = WorkflowClient.newInstance(serviceStubs, io.temporal.client.WorkflowClientOptions.newBuilder()
+    @Produces
+    @ApplicationScoped
+    public WorkflowClient workflowClient() {
+        if (serviceStubs == null) {
+            serviceStubs = WorkflowServiceStubs.newServiceStubs(buildServiceOptions());
+        }
+        WorkflowClientOptions clientOptions = WorkflowClientOptions.newBuilder()
                 .setNamespace(namespace)
-                .build());
-        workerFactory = WorkerFactory.newInstance(client);
-        Worker worker = workerFactory.newWorker("scan-workflows");
-        worker.registerWorkflowImplementationTypes(OpenGrepPRScanWorkflowImpl.class);
-        workerFactory.start();
+                .build();
+        return WorkflowClient.newInstance(serviceStubs, clientOptions);
     }
 
     private WorkflowServiceStubsOptions buildServiceOptions() {
@@ -80,9 +74,6 @@ public class WorkflowWorkerBootstrap {
 
     @PreDestroy
     void shutdown() {
-        if (workerFactory != null) {
-            workerFactory.shutdown();
-        }
         if (serviceStubs != null) {
             serviceStubs.shutdown();
         }

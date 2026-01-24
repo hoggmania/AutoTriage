@@ -1,5 +1,7 @@
 package com.autotriage.common.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.Objects;
 
 public final class ScanRequest {
@@ -8,7 +10,12 @@ public final class ScanRequest {
     private final String commitSha;
     private final Integer prNumber;
 
-    public ScanRequest(String runId, String repository, String commitSha, Integer prNumber) {
+    @JsonCreator
+    public ScanRequest(
+            @JsonProperty("runId") String runId,
+            @JsonProperty("repository") String repository,
+            @JsonProperty("commitSha") String commitSha,
+            @JsonProperty("prNumber") Integer prNumber) {
         this.runId = Objects.requireNonNull(runId, "runId");
         this.repository = Objects.requireNonNull(repository, "repository");
         this.commitSha = Objects.requireNonNull(commitSha, "commitSha");

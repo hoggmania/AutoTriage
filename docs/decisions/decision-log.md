@@ -15,3 +15,19 @@
 - **Rationale:** Jackson integrates natively with Quarkus and Temporal SDKs, has no extra schema compilation step, and is well-understood by JVM teams.
 - **Consequences:** Serialization is human-readable and compatible with Quarkus/Temporal defaults; future migrations to protobuf will require schema conversion and compatibility modeling.
 - **Date:** 2026-01-24
+
+## ADR-0003: Temporal namespace strategy
+- **Context:** Phase 1 requires connecting all services to a shared Temporal deployment while keeping workflow identity and operator workflows simple.
+- **Decision:** Use a single Temporal namespace named `scan-platform` for all scan workflows and activities.
+- **Options considered:** (1) Single namespace for all services, (2) Separate namespace per environment or worker type, (3) Namespace per repository/tenant.
+- **Rationale:** A single namespace keeps the initial wiring simple and matches the Phase 1 scope; environment separation can be handled via separate Temporal clusters or namespaces later.
+- **Consequences:** Operational tooling and namespace-level quotas are shared; future multi-tenant needs will require namespace expansion or routing.
+- **Date:** 2026-01-24
+
+## ADR-0004: TLS defaults for Temporal connectivity
+- **Context:** The platform must support both plaintext and mTLS connections to self-hosted Temporal clusters.
+- **Decision:** Default to plaintext (`temporal.tls.enabled=false`) and enable mTLS via env var plus mounted certificate paths when required.
+- **Options considered:** (1) TLS-on by default with mandatory certs, (2) TLS optional with explicit enablement, (3) Separate binaries for TLS vs non-TLS.
+- **Rationale:** Optional TLS keeps local dev simple while still meeting production requirements by toggling environment configuration.
+- **Consequences:** Operators must explicitly enable TLS in production manifests; misconfiguration can lead to plaintext connections if env vars are missing.
+- **Date:** 2026-01-24

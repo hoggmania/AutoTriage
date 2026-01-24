@@ -30,6 +30,11 @@
             <version>${quarkus.version}</version>
         </dependency>
         <dependency>
+            <groupId>io.temporal</groupId>
+            <artifactId>temporal-sdk</artifactId>
+            <version>${temporal.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.autotriage</groupId>
             <artifactId>scan-common</artifactId>
             <version>${project.parent.version}</version>

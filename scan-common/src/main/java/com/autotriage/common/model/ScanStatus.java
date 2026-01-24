@@ -1,5 +1,7 @@
 package com.autotriage.common.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.Objects;
 
 public final class ScanStatus {
@@ -7,7 +9,11 @@ public final class ScanStatus {
     private final ScanState state;
     private final String message;
 
-    public ScanStatus(String runId, ScanState state, String message) {
+    @JsonCreator
+    public ScanStatus(
+            @JsonProperty("runId") String runId,
+            @JsonProperty("state") ScanState state,
+            @JsonProperty("message") String message) {
         this.runId = Objects.requireNonNull(runId, "runId");
         this.state = Objects.requireNonNull(state, "state");
         this.message = message;
