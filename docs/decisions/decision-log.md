@@ -63,3 +63,11 @@
 - **Rationale:** A lightweight HTTP service mirrors the eventual integration without requiring the full dashboard stack.
 - **Consequences:** The mock must be replaced or extended once the real suppression service contract is finalized.
 - **Date:** 2026-01-24
+
+## ADR-0013: Uploader contract (URIs vs bodies)
+- **Context:** The light worker must transmit scan results to the suppression service while keeping payload size manageable.
+- **Decision:** Send artifact URIs (raw and final SARIF) plus run metadata instead of uploading SARIF bodies directly.
+- **Options considered:** (1) Send URIs, (2) Send SARIF JSON bodies, (3) Send mixed (final body + raw URI).
+- **Rationale:** URIs keep payloads small and allow the suppression service to fetch artifacts from object storage.
+- **Consequences:** The suppression service must have access to the object store; failures will surface as fetch errors rather than upload errors.
+- **Date:** 2026-01-24
