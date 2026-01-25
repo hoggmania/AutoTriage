@@ -103,3 +103,11 @@
 - **Rationale:** Detached signatures keep suppression data clean and allow future KMS/Sigstore verification workflows.
 - **Consequences:** The light worker currently uses a placeholder verifier and a test signature while the canonicalization and real signing are implemented.
 - **Date:** 2026-01-25
+
+## ADR-0011: OpenGrep invocation strategy
+- **Context:** The heavy worker must run OpenGrep against the materialized source with a configurable rule set.
+- **Decision:** Invoke an `opengrep` binary with `--config`, `--sarif`, and `--output` flags; fall back to emitting a stub SARIF when the binary/config is not set.
+- **Options considered:** (1) Direct binary invocation, (2) Run OpenGrep via container runtime, (3) Use Semgrep with compatibility flags.
+- **Rationale:** Direct invocation keeps the worker simple for now while allowing config-driven rule selection; stub SARIF keeps the workflow moving in dev.
+- **Consequences:** Requires `opengrep.bin` and `opengrep.config` to be configured in real deployments; containerization is still needed for production isolation.
+- **Date:** 2026-01-25
