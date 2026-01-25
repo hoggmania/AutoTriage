@@ -71,3 +71,19 @@
 - **Rationale:** URIs keep payloads small and allow the suppression service to fetch artifacts from object storage.
 - **Consequences:** The suppression service must have access to the object store; failures will surface as fetch errors rather than upload errors.
 - **Date:** 2026-01-24
+
+## ADR-0008: Source materialization approach
+- **Context:** The light worker must make repository contents available to the OpenGrep worker as an artifact.
+- **Decision:** Clone the repository and archive the working tree into a tar.gz artifact.
+- **Options considered:** (1) Clone and archive, (2) Download archive from VCS API, (3) On-demand checkout per worker.
+- **Rationale:** Clone+archive is straightforward, supports arbitrary refs, and matches the activity sequence in the workflow.
+- **Consequences:** Requires git availability on the worker image and temporary disk space for the checkout and archive.
+- **Date:** 2026-01-25
+
+## ADR-0018: Local artifact storage in early phases
+- **Context:** Object storage integration is pending, but activities need a URI to pass between workers.
+- **Decision:** Store artifacts on local disk (configurable via `artifacts.dir`) and return `file://` URIs during early development.
+- **Options considered:** (1) Local filesystem storage, (2) In-memory blobs, (3) Immediate S3 integration.
+- **Rationale:** Local storage keeps the implementation lightweight while allowing end-to-end workflow testing.
+- **Consequences:** Workers must share a filesystem or the artifact store will need to be replaced for distributed deployments.
+- **Date:** 2026-01-25

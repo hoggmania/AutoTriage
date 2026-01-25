@@ -7,26 +7,56 @@ import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
 
+import java.io.BufferedOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 public class LightScanActivities implements ScanActivities {
 
     private static final Logger log = Logger.getLogger(LightScanActivities.class);
     private static final ObjectMapper mapper = new ObjectMapper();
+    private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(2);
 
     @Override
     public ArtifactRef resolveRepoSource(ScanRequest request) {
         log.infov("resolveRepoSource runId={0} repo={1} sha={2}", request.getRunId(), request.getRepository(), request.getCommitSha());
-        return new ArtifactRef("stub://source/" + request.getRunId(), "source-archive");
+        Path workspace = null;
+        try {
+            workspace = Files.createTempDirectory("autotriage-source-");
+            cloneRepo(request.getRepository(), request.getCommitSha(), workspace);
+            Path artifactsDir = resolveArtifactsDir();
+            Files.createDirectories(artifactsDir);
+            Path archivePath = artifactsDir.resolve("source-" + request.getRunId() + ".tar.gz");
+            createTarGzArchive(workspace, archivePath);
+            return new ArtifactRef(archivePath.toUri().toString(), "source-archive");
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to resolve repository source", e);
+        } finally {
+            if (workspace != null) {
+                deleteRecursively(workspace);
+            }
+        }
     }
 
     @Override
@@ -86,5 +116,102 @@ public class LightScanActivities implements ScanActivities {
     public ScanStatus computeVerdict(String runId, ArtifactRef finalSarif) {
         log.infov("computeVerdict runId={0} finalUri={1}", runId, finalSarif.getUri());
         return new ScanStatus(runId, ScanState.COMPLETED, "Stub verdict: PASS");
+    }
+
+    private void cloneRepo(String repository, String commitSha, Path workspace) throws IOException, InterruptedException {
+        String cloneUrl = buildCloneUrl(repository);
+        runProcess(new String[] {"git", "clone", "--no-checkout", cloneUrl, workspace.toString()});
+        runProcess(new String[] {"git", "-C", workspace.toString(), "checkout", commitSha});
+    }
+
+    private String buildCloneUrl(String repository) {
+        Optional<String> token = ConfigProvider.getConfig().getOptionalValue("git.clone.token", String.class);
+        if (token.isPresent() && repository.startsWith("https://")) {
+            return repository.replace("https://", "https://x-access-token:" + token.get() + "@");
+        }
+        return repository;
+    }
+
+    private void runProcess(String[] command) throws IOException, InterruptedException {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        String output;
+        try (InputStream stream = process.getInputStream()) {
+            output = new String(stream.readAllBytes());
+        }
+        boolean finished = process.waitFor(PROCESS_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IllegalStateException("Command timed out: " + String.join(" ", command));
+        }
+        if (process.exitValue() != 0) {
+            throw new IllegalStateException("Command failed: " + String.join(" ", command) + " output=" + output);
+        }
+    }
+
+    private Path resolveArtifactsDir() {
+        String dir = ConfigProvider.getConfig()
+                .getOptionalValue("artifacts.dir", String.class)
+                .orElse("artifacts");
+        return Path.of(dir);
+    }
+
+    private void createTarGzArchive(Path sourceDir, Path outputFile) throws IOException {
+        // Create a tar.gz archive while skipping the VCS metadata.
+        try (OutputStream fileOut = Files.newOutputStream(outputFile);
+             BufferedOutputStream buffered = new BufferedOutputStream(fileOut);
+             GzipCompressorOutputStream gzipOut = new GzipCompressorOutputStream(buffered);
+             TarArchiveOutputStream tarOut = new TarArchiveOutputStream(gzipOut)) {
+            tarOut.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
+            Files.walkFileTree(sourceDir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                    Path relative = sourceDir.relativize(dir);
+                    if (relative.toString().startsWith(".git")) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    if (!relative.toString().isEmpty()) {
+                        TarArchiveEntry entry = new TarArchiveEntry(dir.toFile(), relative.toString() + "/");
+                        tarOut.putArchiveEntry(entry);
+                        tarOut.closeArchiveEntry();
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    Path relative = sourceDir.relativize(file);
+                    if (relative.toString().startsWith(".git")) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    TarArchiveEntry entry = new TarArchiveEntry(file.toFile(), relative.toString());
+                    tarOut.putArchiveEntry(entry);
+                    Files.copy(file, tarOut);
+                    tarOut.closeArchiveEntry();
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+    }
+
+    private void deleteRecursively(Path root) {
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    Files.deleteIfExists(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                    Files.deleteIfExists(dir);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            log.warnv("Failed to delete temp workspace {0}: {1}", root, e.getMessage());
+        }
     }
 }
