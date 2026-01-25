@@ -6,7 +6,8 @@
 3. From the repo root, run `mvn -pl scan-api quarkus:dev` to boot the REST service.
 4. Start Temporal developer server (Docker Compose or standalone) and configure the worker modules: `mvn -pl scan-worker-workflow quarkus:dev` plus the light/filter/opengrep workers.
 5. If you are using the Temporal dev server, set `TEMPORAL_TARGET=localhost:7233` and `TEMPORAL_TLS_ENABLED=false`.
-6. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
+6. Start the suppression mock if you want uploader integration testing: `mvn -pl suppression-service-mock quarkus:dev` (defaults to port 8090).
+7. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
 
 ## Kubernetes Run
 1. Build containers with `docker build` using the Dockerfiles in `docker/` and push them to a registry.

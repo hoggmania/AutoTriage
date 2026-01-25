@@ -55,3 +55,11 @@
 - **Rationale:** Fail-closed ensures untrusted suppressions do not hide findings, while still allowing the scan to complete.
 - **Consequences:** Some runs may report more findings until suppression signatures are fixed; alerting should highlight verification failures.
 - **Date:** 2026-01-24
+
+## ADR-0015: Suppression service mock contract
+- **Context:** Phase 5 calls for a mock suppression service so the uploader can be exercised before the real service is available.
+- **Decision:** Implement a minimal `suppression-service-mock` with `POST /ingest` that accepts any JSON payload and returns runId plus mock report/dashboard/PR URLs.
+- **Options considered:** (1) Mock service with a fixed JSON response, (2) In-memory service with minimal validation, (3) Skip mock and stub uploads in code.
+- **Rationale:** A lightweight HTTP service mirrors the eventual integration without requiring the full dashboard stack.
+- **Consequences:** The mock must be replaced or extended once the real suppression service contract is finalized.
+- **Date:** 2026-01-24

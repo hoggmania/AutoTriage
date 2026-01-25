@@ -21,4 +21,4 @@ jobs:
           cache: maven
 
       - name: Build and test modules
-        run: mvn -B -pl scan-common,scan-api,scan-worker-workflow,scan-worker-light,scan-worker-filter,scan-worker-opengrep -am verify
+        run: mvn -B -pl scan-common,scan-api,scan-worker-workflow,scan-worker-light,scan-worker-filter,scan-worker-opengrep,suppression-service-mock -am verify
