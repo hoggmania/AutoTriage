@@ -2,6 +2,7 @@ package com.autotriage.common.activity;
 
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
+import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.ScanStatus;
 
 public interface ScanActivities {
@@ -14,9 +15,9 @@ public interface ScanActivities {
 
     ArtifactRef runOpenGrep(ArtifactRef source, String runId);
 
-    ArtifactRef applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle);
+    SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle);
 
-    void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif);
+    void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport);
 
     ScanStatus computeVerdict(String runId, ArtifactRef finalSarif);
 }

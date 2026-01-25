@@ -5,6 +5,7 @@ import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.activity.ScanActivities;
 import com.autotriage.common.model.ArtifactRef;
+import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.workflow.OpenGrepPRScanWorkflow;
 import io.temporal.activity.ActivityOptions;
 import io.temporal.common.RetryOptions;
@@ -94,13 +95,13 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
             }
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Applying suppressions");
-            ArtifactRef finalSarif = filterActivities.applySuppressions(rawSarif, suppressionBundle);
+            SuppressionApplicationResult suppressionResult = filterActivities.applySuppressions(rawSarif, suppressionBundle);
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Uploading results");
-            lightActivities.uploadResults(request.getRunId(), finalSarif, rawSarif);
+            lightActivities.uploadResults(request.getRunId(), suppressionResult.getFinalSarif(), rawSarif, suppressionResult.getSuppressionReport());
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Computing verdict");
-            ScanStatus verdict = lightActivities.computeVerdict(request.getRunId(), finalSarif);
+            ScanStatus verdict = lightActivities.computeVerdict(request.getRunId(), suppressionResult.getFinalSarif());
             updateStatus(request.getRunId(), verdict.getState(), verdict.getMessage());
         } catch (Exception e) {
             Workflow.getLogger(OpenGrepPRScanWorkflowImpl.class)

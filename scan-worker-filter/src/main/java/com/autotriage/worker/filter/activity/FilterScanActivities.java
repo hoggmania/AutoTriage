@@ -4,6 +4,7 @@ import com.autotriage.common.activity.ScanActivities;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanStatus;
+import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.worker.filter.model.SuppressionReport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -55,7 +56,7 @@ public class FilterScanActivities implements ScanActivities {
     }
 
     @Override
-    public ArtifactRef applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
+    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
         log.infov("applySuppressions rawUri={0} suppressionUri={1}", rawSarif.getUri(), suppressionBundle.getUri());
         try {
             Path rawPath = resolveFilePath(rawSarif.getUri());
@@ -99,7 +100,9 @@ public class FilterScanActivities implements ScanActivities {
             SuppressionReport report = new SuppressionReport(suppressed, expired, invalid);
             Path reportPath = artifactsDir.resolve("suppression-report-" + rawPath.getFileName().toString().replace(".sarif", ".json"));
             Files.writeString(reportPath, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report), StandardCharsets.UTF_8);
-            return new ArtifactRef(finalSarifPath.toUri().toString(), "sarif-final");
+            return new SuppressionApplicationResult(
+                    new ArtifactRef(finalSarifPath.toUri().toString(), "sarif-final"),
+                    new ArtifactRef(reportPath.toUri().toString(), "suppression-report"));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to apply suppressions", e);
         }

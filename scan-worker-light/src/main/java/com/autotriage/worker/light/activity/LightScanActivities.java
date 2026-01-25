@@ -5,6 +5,7 @@ import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
+import com.autotriage.common.model.SuppressionApplicationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.autotriage.worker.light.security.SuppressionSignatureVerifier;
@@ -108,12 +109,12 @@ public class LightScanActivities implements ScanActivities {
     }
 
     @Override
-    public ArtifactRef applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
+    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
         throw new UnsupportedOperationException("applySuppressions is handled by filter worker");
     }
 
     @Override
-    public void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif) {
+    public void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport) {
         String baseUrl = ConfigProvider.getConfig()
                 .getOptionalValue("suppression.service.url", String.class)
                 .orElse("http://localhost:8090");
@@ -122,6 +123,7 @@ public class LightScanActivities implements ScanActivities {
         payload.put("runId", runId);
         payload.put("rawSarifUri", rawSarif.getUri());
         payload.put("finalSarifUri", finalSarif.getUri());
+        payload.put("suppressionReportUri", suppressionReport.getUri());
         payload.put("source", "autotriage");
         try {
             String body = mapper.writeValueAsString(payload);
