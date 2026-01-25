@@ -111,3 +111,11 @@
 - **Rationale:** Direct invocation keeps the worker simple for now while allowing config-driven rule selection; stub SARIF keeps the workflow moving in dev.
 - **Consequences:** Requires `opengrep.bin` and `opengrep.config` to be configured in real deployments; containerization is still needed for production isolation.
 - **Date:** 2026-01-25
+
+## ADR-0012: Suppression matching precedence
+- **Context:** The filter worker must decide how to match suppression entries to SARIF results and handle expiry/invalid rules.
+- **Decision:** Match suppressions by SARIF fingerprint first, with a fallback to ruleId+line; treat expired suppressions as excluded and invalid timestamps as non-applicable.
+- **Options considered:** (1) Fingerprint-only matching, (2) Fingerprint then region-based fallback, (3) Custom hash of message + rule + line.
+- **Rationale:** Fingerprints are the most stable identifier; a minimal fallback keeps compatibility while avoiding over-suppression.
+- **Consequences:** Some suppressions may not match if fingerprints are absent; future revisions can expand matching heuristics and report drift counts.
+- **Date:** 2026-01-25
