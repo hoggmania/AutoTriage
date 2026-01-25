@@ -7,6 +7,8 @@ import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.autotriage.worker.light.security.SuppressionSignatureVerifier;
+import com.autotriage.worker.light.security.TestKeySuppressionSignatureVerifier;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
@@ -37,6 +39,7 @@ public class LightScanActivities implements ScanActivities {
     private static final Logger log = Logger.getLogger(LightScanActivities.class);
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(2);
+    private static final SuppressionSignatureVerifier signatureVerifier = new TestKeySuppressionSignatureVerifier();
 
     @Override
     public ArtifactRef resolveRepoSource(ScanRequest request) {
@@ -62,13 +65,41 @@ public class LightScanActivities implements ScanActivities {
     @Override
     public ArtifactRef fetchSuppressionBundle(String repository, String ref) {
         log.infov("fetchSuppressionBundle repo={0} ref={1}", repository, ref);
-        return new ArtifactRef("stub://suppressions/" + ref, "suppression-bundle");
+        Path workspace = null;
+        try {
+            workspace = Files.createTempDirectory("autotriage-suppressions-");
+            cloneRepo(repository, ref, workspace);
+            Path suppressionsDir = workspace.resolve(".opengrep").resolve("suppressions");
+            if (!Files.exists(suppressionsDir) || !Files.isDirectory(suppressionsDir)) {
+                return new ArtifactRef("none://suppressions", "suppression-bundle");
+            }
+            Path artifactsDir = resolveArtifactsDir();
+            Files.createDirectories(artifactsDir);
+            String safeRef = sanitizeRef(ref);
+            Path archivePath = artifactsDir.resolve("suppressions-" + safeRef + ".tar.gz");
+            createTarGzArchive(suppressionsDir, archivePath);
+            Files.writeString(Path.of(archivePath.toString() + ".sig"), "TEST-SIGNATURE");
+            return new ArtifactRef(archivePath.toUri().toString(), "suppression-bundle");
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to fetch suppression bundle", e);
+        } finally {
+            if (workspace != null) {
+                deleteRecursively(workspace);
+            }
+        }
     }
 
     @Override
     public boolean verifySuppressionSignature(ArtifactRef bundle) {
         log.infov("verifySuppressionSignature uri={0}", bundle.getUri());
-        return true;
+        if (bundle.getUri().startsWith("none://")) {
+            return false;
+        }
+        Path bundlePath = resolveBundlePath(bundle.getUri());
+        if (bundlePath == null) {
+            return false;
+        }
+        return signatureVerifier.verify(bundlePath);
     }
 
     @Override
@@ -213,5 +244,24 @@ public class LightScanActivities implements ScanActivities {
         } catch (IOException e) {
             log.warnv("Failed to delete temp workspace {0}: {1}", root, e.getMessage());
         }
+    }
+
+    private Path resolveBundlePath(String uri) {
+        try {
+            URI bundleUri = URI.create(uri);
+            if (!"file".equalsIgnoreCase(bundleUri.getScheme())) {
+                return null;
+            }
+            return Path.of(bundleUri);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String sanitizeRef(String ref) {
+        if (ref == null || ref.isBlank()) {
+            return "unknown";
+        }
+        return ref.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 }

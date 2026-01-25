@@ -87,3 +87,19 @@
 - **Rationale:** Local storage keeps the implementation lightweight while allowing end-to-end workflow testing.
 - **Consequences:** Workers must share a filesystem or the artifact store will need to be replaced for distributed deployments.
 - **Date:** 2026-01-25
+
+## ADR-0009: Suppression ref resolution
+- **Context:** Suppression bundles may differ between the PR head and base ref; the workflow must pick the correct source.
+- **Decision:** Prefer the PR head ref when available, otherwise fall back to the base ref; the activity uses the ref passed in by the workflow.
+- **Options considered:** (1) PR head first, (2) Base ref only, (3) Merge base and head suppressions.
+- **Rationale:** PR head is most relevant to the change under test and matches the requirement in the scan workflow steps.
+- **Consequences:** If PR head ref metadata is missing, suppressions are sourced from the base ref; future enhancements may need explicit ref fields.
+- **Date:** 2026-01-25
+
+## ADR-0010: Suppression signature format and canonicalization
+- **Context:** Suppression bundles must be authenticated before filtering SARIF results.
+- **Decision:** Define a detached signature file (`.sig`) stored alongside the suppression bundle, using a canonicalized YAML payload with stable key ordering and normalized line endings for signature input.
+- **Options considered:** (1) Detached signature file, (2) Inline signature in YAML, (3) No signature with trusted storage.
+- **Rationale:** Detached signatures keep suppression data clean and allow future KMS/Sigstore verification workflows.
+- **Consequences:** The light worker currently uses a placeholder verifier and a test signature while the canonicalization and real signing are implemented.
+- **Date:** 2026-01-25

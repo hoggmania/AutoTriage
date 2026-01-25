@@ -8,7 +8,7 @@
 5. If you are using the Temporal dev server, set `TEMPORAL_TARGET=localhost:7233` and `TEMPORAL_TLS_ENABLED=false`.
 6. Start the suppression mock if you want uploader integration testing: `mvn -pl suppression-service-mock quarkus:dev` (defaults to port 8090) and set `SUPPRESSION_SERVICE_URL=http://localhost:8090`.
 7. For repo cloning in the light worker, ensure `git` is installed and set `GIT_CLONE_TOKEN` if required for private repositories.
-8. Optional: set `ARTIFACTS_DIR=artifacts` to control where the source tarball is written.
+8. Optional: set `ARTIFACTS_DIR=artifacts` to control where the source tarball and suppression bundle are written.
 9. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
 
 ## Kubernetes Run
