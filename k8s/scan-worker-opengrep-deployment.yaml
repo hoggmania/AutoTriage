@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-opengrep
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scan-worker-opengrep
+  template:
+    metadata:
+      labels:
+        app: scan-worker-opengrep
+    spec:
+      containers:
+        - name: scan-worker-opengrep
+          image: autotriage/scan-worker-opengrep:latest
+          envFrom:
+            - configMapRef:
+                name: autotriage-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "3Gi"
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+            - name: temporal-tls
+              mountPath: /etc/temporal-tls
+              readOnly: true
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: autotriage-artifacts
+        - name: temporal-tls
+          secret:
+            secretName: temporal-tls

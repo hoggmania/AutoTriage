@@ -6,6 +6,8 @@ import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.model.SuppressionApplicationResult;
+import com.autotriage.common.model.SuppressionBundle;
+import com.autotriage.common.model.SuppressionSource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.autotriage.worker.light.security.SuppressionSignatureVerifier;
@@ -24,6 +26,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,29 +67,20 @@ public class LightScanActivities implements ScanActivities {
     }
 
     @Override
-    public ArtifactRef fetchSuppressionBundle(String repository, String ref) {
-        log.infov("fetchSuppressionBundle repo={0} ref={1}", repository, ref);
-        Path workspace = null;
+    public SuppressionBundle fetchSuppressionBundle(String repository, String headRef, String baseRef) {
+        log.infov("fetchSuppressionBundle repo={0} headRef={1} baseRef={2}", repository, headRef, baseRef);
         try {
-            workspace = Files.createTempDirectory("autotriage-suppressions-");
-            cloneRepo(repository, ref, workspace);
-            Path suppressionsDir = workspace.resolve(".opengrep").resolve("suppressions");
-            if (!Files.exists(suppressionsDir) || !Files.isDirectory(suppressionsDir)) {
-                return new ArtifactRef("none://suppressions", "suppression-bundle");
+            SuppressionBundle bundle = tryFetchSuppressionBundle(repository, headRef, SuppressionSource.PR_HEAD);
+            if (bundle != null) {
+                return bundle;
             }
-            Path artifactsDir = resolveArtifactsDir();
-            Files.createDirectories(artifactsDir);
-            String safeRef = sanitizeRef(ref);
-            Path archivePath = artifactsDir.resolve("suppressions-" + safeRef + ".tar.gz");
-            createTarGzArchive(suppressionsDir, archivePath);
-            Files.writeString(Path.of(archivePath.toString() + ".sig"), "TEST-SIGNATURE");
-            return new ArtifactRef(archivePath.toUri().toString(), "suppression-bundle");
+            bundle = tryFetchSuppressionBundle(repository, baseRef, SuppressionSource.BASE_REF);
+            if (bundle != null) {
+                return bundle;
+            }
+            return SuppressionBundle.none();
         } catch (Exception e) {
             throw new IllegalStateException("Failed to fetch suppression bundle", e);
-        } finally {
-            if (workspace != null) {
-                deleteRecursively(workspace);
-            }
         }
     }
 
@@ -148,7 +142,36 @@ public class LightScanActivities implements ScanActivities {
     @Override
     public ScanStatus computeVerdict(String runId, ArtifactRef finalSarif) {
         log.infov("computeVerdict runId={0} finalUri={1}", runId, finalSarif.getUri());
-        return new ScanStatus(runId, ScanState.COMPLETED, "Stub verdict: PASS");
+        try {
+            Path sarifPath = resolveFilePath(finalSarif.getUri());
+            JsonNode sarif = mapper.readTree(Files.readString(sarifPath, StandardCharsets.UTF_8));
+            JsonNode results = sarif.at("/runs/0/results");
+            int high = 0;
+            int medium = 0;
+            int low = 0;
+            if (results != null && results.isArray()) {
+                for (JsonNode result : results) {
+                    Severity severity = resolveSeverity(result);
+                    switch (severity) {
+                        case HIGH -> high++;
+                        case MEDIUM -> medium++;
+                        case LOW -> low++;
+                    }
+                }
+            }
+            GatePolicy policy = GatePolicy.fromConfig();
+            Verdict verdict = policy.evaluate(high, medium, low);
+            String message = String.format(
+                    "Verdict: %s (high=%d, medium=%d, low=%d; %s)",
+                    verdict.label(),
+                    high,
+                    medium,
+                    low,
+                    policy.describe());
+            return new ScanStatus(runId, ScanState.COMPLETED, message);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to compute verdict", e);
+        }
     }
 
     private void cloneRepo(String repository, String commitSha, Path workspace) throws IOException, InterruptedException {
@@ -188,6 +211,14 @@ public class LightScanActivities implements ScanActivities {
                 .getOptionalValue("artifacts.dir", String.class)
                 .orElse("artifacts");
         return Path.of(dir);
+    }
+
+    private Path resolveFilePath(String uri) {
+        URI sourceUri = URI.create(uri);
+        if (!"file".equalsIgnoreCase(sourceUri.getScheme())) {
+            throw new IllegalArgumentException("Only file:// artifacts are supported in this phase");
+        }
+        return Path.of(sourceUri);
     }
 
     private void createTarGzArchive(Path sourceDir, Path outputFile) throws IOException {
@@ -265,5 +296,124 @@ public class LightScanActivities implements ScanActivities {
             return "unknown";
         }
         return ref.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    private SuppressionBundle tryFetchSuppressionBundle(String repository, String ref, SuppressionSource source) throws IOException, InterruptedException {
+        if (ref == null || ref.isBlank()) {
+            return null;
+        }
+        Path workspace = null;
+        try {
+            workspace = Files.createTempDirectory("autotriage-suppressions-");
+            cloneRepo(repository, ref, workspace);
+            Path suppressionsDir = workspace.resolve(".opengrep").resolve("suppressions");
+            if (!Files.exists(suppressionsDir) || !Files.isDirectory(suppressionsDir)) {
+                return null;
+            }
+            Path artifactsDir = resolveArtifactsDir();
+            Files.createDirectories(artifactsDir);
+            String safeRef = sanitizeRef(ref);
+            Path archivePath = artifactsDir.resolve("suppressions-" + safeRef + ".tar.gz");
+            createTarGzArchive(suppressionsDir, archivePath);
+            Files.writeString(Path.of(archivePath.toString() + ".sig"), "TEST-SIGNATURE");
+            return new SuppressionBundle(new ArtifactRef(archivePath.toUri().toString(), "suppression-bundle"), source);
+        } finally {
+            if (workspace != null) {
+                deleteRecursively(workspace);
+            }
+        }
+    }
+
+    private Severity resolveSeverity(JsonNode result) {
+        JsonNode severityNode = result.at("/properties/severity");
+        if (severityNode != null && severityNode.isTextual()) {
+            return mapSeverityValue(severityNode.asText());
+        }
+        JsonNode levelNode = result.get("level");
+        if (levelNode != null && levelNode.isTextual()) {
+            return mapSarifLevel(levelNode.asText());
+        }
+        return Severity.LOW;
+    }
+
+    private Severity mapSeverityValue(String value) {
+        String normalized = value.trim().toUpperCase();
+        return switch (normalized) {
+            case "CRITICAL", "HIGH" -> Severity.HIGH;
+            case "MEDIUM", "MODERATE" -> Severity.MEDIUM;
+            case "LOW", "INFO" -> Severity.LOW;
+            default -> Severity.LOW;
+        };
+    }
+
+    private Severity mapSarifLevel(String level) {
+        String normalized = level.trim().toLowerCase();
+        return switch (normalized) {
+            case "error" -> Severity.HIGH;
+            case "warning" -> Severity.MEDIUM;
+            case "note", "none" -> Severity.LOW;
+            default -> Severity.LOW;
+        };
+    }
+
+    private enum Severity {
+        HIGH,
+        MEDIUM,
+        LOW
+    }
+
+    private record GatePolicy(boolean failOnAny, int maxHigh, int maxMedium, int maxLow) {
+        private static final int UNLIMITED = Integer.MAX_VALUE;
+
+        static GatePolicy fromConfig() {
+            var config = ConfigProvider.getConfig();
+            boolean failOnAny = config.getOptionalValue("gate.policy.fail-on-any", Boolean.class)
+                    .orElse(false);
+            int maxHigh = normalizeLimit(config.getOptionalValue("gate.policy.max-high", Integer.class), 0);
+            int maxMedium = normalizeLimit(config.getOptionalValue("gate.policy.max-medium", Integer.class), UNLIMITED);
+            int maxLow = normalizeLimit(config.getOptionalValue("gate.policy.max-low", Integer.class), UNLIMITED);
+            return new GatePolicy(failOnAny, maxHigh, maxMedium, maxLow);
+        }
+
+        Verdict evaluate(int high, int medium, int low) {
+            int total = high + medium + low;
+            if (failOnAny && total > 0) {
+                return Verdict.FAIL;
+            }
+            if (high > maxHigh || medium > maxMedium || low > maxLow) {
+                return Verdict.FAIL;
+            }
+            return Verdict.PASS;
+        }
+
+        String describe() {
+            return String.format(
+                    "failOnAny=%s, thresholds: high<=%s, medium<=%s, low<=%s",
+                    failOnAny,
+                    formatLimit(maxHigh),
+                    formatLimit(maxMedium),
+                    formatLimit(maxLow));
+        }
+
+        private static int normalizeLimit(Optional<Integer> value, int defaultValue) {
+            if (value.isEmpty()) {
+                return defaultValue;
+            }
+            int limit = value.get();
+            return limit < 0 ? UNLIMITED : limit;
+        }
+
+        private static String formatLimit(int limit) {
+            return limit == UNLIMITED ? "unlimited" : Integer.toString(limit);
+        }
+    }
+
+    private enum Verdict {
+        PASS,
+        FAIL;
+
+        String label() {
+            return name();
+        }
     }
 }

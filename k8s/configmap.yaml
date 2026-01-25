@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autotriage-config
+data:
+  TEMPORAL_TARGET: "temporal:7233"
+  TEMPORAL_NAMESPACE: "scan-platform"
+  TEMPORAL_TLS_ENABLED: "false"
+  TEMPORAL_TLS_CLIENT_CERT_PATH: "/etc/temporal-tls/tls.crt"
+  TEMPORAL_TLS_CLIENT_KEY_PATH: "/etc/temporal-tls/tls.key"
+  TEMPORAL_TLS_SERVER_CA_PATH: "/etc/temporal-tls/ca.crt"
+  SUPPRESSION_SERVICE_URL: "http://suppression-service-mock:8090"
+  ARTIFACTS_DIR: "/artifacts"
+  GATE_POLICY_FAIL_ON_ANY: "false"
+  GATE_POLICY_MAX_HIGH: "0"
+  GATE_POLICY_MAX_MEDIUM: "-1"
+  GATE_POLICY_MAX_LOW: "-1"

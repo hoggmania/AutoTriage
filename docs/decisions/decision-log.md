@@ -119,3 +119,19 @@
 - **Rationale:** Fingerprints are the most stable identifier; a minimal fallback keeps compatibility while avoiding over-suppression.
 - **Consequences:** Some suppressions may not match if fingerprints are absent; future revisions can expand matching heuristics and report drift counts.
 - **Date:** 2026-01-25
+
+## ADR-0014: Verdict gating policy via environment-configured thresholds
+- **Context:** The scan pipeline needs a deterministic PASS/FAIL verdict based on final SARIF findings, but no per-run policy object exists yet.
+- **Decision:** Implement gating in the light worker using environment-configured thresholds (`gate.policy.fail-on-any`, `gate.policy.max-high`, `gate.policy.max-medium`, `gate.policy.max-low`) and return the verdict in the `ScanStatus` message while keeping state as `COMPLETED`.
+- **Options considered:** (1) Fail on any finding with no configuration, (2) Add `gatePolicyRef` to the API request and fetch policy per run, (3) External policy service with dynamic thresholds.
+- **Rationale:** Configured thresholds keep the pipeline deterministic without expanding the API surface; returning `COMPLETED` avoids conflating a failing gate with an operational failure.
+- **Consequences:** Gating is global per environment until a per-run policy reference is added; policy changes require configuration updates.
+- **Date:** 2026-01-25
+
+## ADR-0016: Worker deployments and resource sizing defaults
+- **Context:** The platform needs Kubernetes manifests with sensible defaults for each worker queue while keeping the heavy OpenGrep execution scalable.
+- **Decision:** Deploy each worker type as a dedicated Deployment with baseline CPU/memory requests, use a shared artifacts PVC, and attach an HPA to the OpenGrep worker based on CPU utilization.
+- **Options considered:** (1) Single worker Deployment for all queues, (2) Separate Deployments per queue without autoscaling, (3) Separate Deployments with HPA for OpenGrep only.
+- **Rationale:** Dedicated Deployments isolate failure modes and allow tuning per queue; OpenGrep is the main scaling hotspot so it benefits from HPA first.
+- **Consequences:** Resource defaults must be tuned per cluster; HPA requires metrics-server to be installed.
+- **Date:** 2026-01-25

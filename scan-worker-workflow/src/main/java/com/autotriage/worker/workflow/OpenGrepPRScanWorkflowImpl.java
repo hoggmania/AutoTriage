@@ -6,6 +6,8 @@ import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.activity.ScanActivities;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.SuppressionApplicationResult;
+import com.autotriage.common.model.SuppressionBundle;
+import com.autotriage.common.model.SuppressionSource;
 import com.autotriage.common.workflow.OpenGrepPRScanWorkflow;
 import io.temporal.activity.ActivityOptions;
 import io.temporal.common.RetryOptions;
@@ -75,12 +77,22 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
             }
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Fetching suppressions");
-            ArtifactRef suppressionBundle = lightActivities.fetchSuppressionBundle(request.getRepository(), request.getCommitSha());
+            String headRef = resolveHeadRef(request);
+            SuppressionBundle suppressionBundle = lightActivities.fetchSuppressionBundle(
+                    request.getRepository(),
+                    headRef,
+                    request.getBaseRef());
+            ArtifactRef suppressionArtifact = suppressionBundle.getBundle();
+            if (suppressionBundle.getSource() != SuppressionSource.NONE) {
+                updateStatus(request.getRunId(), ScanState.RUNNING, "Suppressions sourced from " + suppressionBundle.getSource());
+            } else {
+                updateStatus(request.getRunId(), ScanState.RUNNING, "No suppressions found");
+            }
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Verifying suppressions");
-            boolean verified = lightActivities.verifySuppressionSignature(suppressionBundle);
+            boolean verified = lightActivities.verifySuppressionSignature(suppressionArtifact);
             if (!verified) {
-                suppressionBundle = new ArtifactRef("none://suppressions", "suppression-bundle");
+                suppressionArtifact = new ArtifactRef("none://suppressions", "suppression-bundle");
             }
             if (cancelRequested) {
                 updateStatus(request.getRunId(), ScanState.CANCELED, "Canceled after suppression verification");
@@ -95,7 +107,7 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
             }
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Applying suppressions");
-            SuppressionApplicationResult suppressionResult = filterActivities.applySuppressions(rawSarif, suppressionBundle);
+            SuppressionApplicationResult suppressionResult = filterActivities.applySuppressions(rawSarif, suppressionArtifact);
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Uploading results");
             lightActivities.uploadResults(request.getRunId(), suppressionResult.getFinalSarif(), rawSarif, suppressionResult.getSuppressionReport());
@@ -123,5 +135,13 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
 
     private void updateStatus(String runId, ScanState state, String message) {
         status = new ScanStatus(runId, state, message);
+    }
+
+    private String resolveHeadRef(ScanRequest request) {
+        String headRef = request.getHeadRef();
+        if (headRef == null || headRef.isBlank()) {
+            return request.getCommitSha();
+        }
+        return headRef;
     }
 }

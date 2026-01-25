@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scan-api
+  template:
+    metadata:
+      labels:
+        app: scan-api
+    spec:
+      containers:
+        - name: scan-api
+          image: autotriage/scan-api:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: autotriage-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: temporal-tls
+              mountPath: /etc/temporal-tls
+              readOnly: true
+      volumes:
+        - name: temporal-tls
+          secret:
+            secretName: temporal-tls

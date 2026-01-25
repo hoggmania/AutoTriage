@@ -4,12 +4,13 @@ import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.ScanStatus;
+import com.autotriage.common.model.SuppressionBundle;
 
 public interface ScanActivities {
 
     ArtifactRef resolveRepoSource(ScanRequest request);
 
-    ArtifactRef fetchSuppressionBundle(String repository, String ref);
+    SuppressionBundle fetchSuppressionBundle(String repository, String headRef, String baseRef);
 
     boolean verifySuppressionSignature(ArtifactRef bundle);
 

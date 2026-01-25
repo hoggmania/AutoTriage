@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-workflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scan-worker-workflow
+  template:
+    metadata:
+      labels:
+        app: scan-worker-workflow
+    spec:
+      containers:
+        - name: scan-worker-workflow
+          image: autotriage/scan-worker-workflow:latest
+          envFrom:
+            - configMapRef:
+                name: autotriage-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: temporal-tls
+              mountPath: /etc/temporal-tls
+              readOnly: true
+      volumes:
+        - name: temporal-tls
+          secret:
+            secretName: temporal-tls

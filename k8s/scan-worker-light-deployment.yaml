@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-light
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scan-worker-light
+  template:
+    metadata:
+      labels:
+        app: scan-worker-light
+    spec:
+      containers:
+        - name: scan-worker-light
+          image: autotriage/scan-worker-light:latest
+          envFrom:
+            - configMapRef:
+                name: autotriage-config
+          env:
+            - name: GIT_CLONE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: autotriage-git
+                  key: GIT_CLONE_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+            - name: temporal-tls
+              mountPath: /etc/temporal-tls
+              readOnly: true
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: autotriage-artifacts
+        - name: temporal-tls
+          secret:
+            secretName: temporal-tls

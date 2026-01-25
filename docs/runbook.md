@@ -12,6 +12,13 @@
 9. Configure the OpenGrep worker with `OPENGREP_BIN=opengrep` and `OPENGREP_CONFIG=/path/to/rules.yml` to generate SARIF (it writes stub SARIF if unset).
 10. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
 
+## Podman Compose Run
+1. Start a Temporal dev server on the host (or set `TEMPORAL_TARGET` to your cluster).
+2. From the repo root, run `scripts/podman-compose.ps1 up` (PowerShell) or `scripts/podman-compose.sh up` (bash) to build and start containers.
+3. `scan-api` listens on port 8080 and the suppression mock on 8090; `ARTIFACTS_DIR` is shared across workers via a podman volume.
+4. To stop everything, run `scripts/podman-compose.ps1 down` or `scripts/podman-compose.sh down`.
+5. Optional overrides: set `GIT_CLONE_TOKEN` for private repos and `OPENGREP_BIN`/`OPENGREP_CONFIG` for real SARIF output.
+
 ## Kubernetes Run
 1. Build containers with `docker build` using the Dockerfiles in `docker/` and push them to a registry.
 2. Deploy Temporal (with TLS certs mounted via Secrets) and apply the manifests under `k8s/` which wire config as env vars.

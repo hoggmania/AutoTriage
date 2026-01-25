@@ -1,0 +1,72 @@
+services:
+  scan-api:
+    build:
+      context: .
+      dockerfile: docker/scan-api.Dockerfile
+    environment:
+      - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
+      - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+    ports:
+      - "8080:8080"
+
+  scan-worker-workflow:
+    build:
+      context: .
+      dockerfile: docker/scan-worker-workflow.Dockerfile
+    environment:
+      - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
+      - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+
+  scan-worker-light:
+    build:
+      context: .
+      dockerfile: docker/scan-worker-light.Dockerfile
+    environment:
+      - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
+      - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+      - SUPPRESSION_SERVICE_URL=${SUPPRESSION_SERVICE_URL:-http://suppression-service-mock:8090}
+      - ARTIFACTS_DIR=/artifacts
+      - GIT_CLONE_TOKEN
+    volumes:
+      - artifacts:/artifacts
+    depends_on:
+      - suppression-service-mock
+
+  scan-worker-filter:
+    build:
+      context: .
+      dockerfile: docker/scan-worker-filter.Dockerfile
+    environment:
+      - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
+      - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+      - ARTIFACTS_DIR=/artifacts
+    volumes:
+      - artifacts:/artifacts
+
+  scan-worker-opengrep:
+    build:
+      context: .
+      dockerfile: docker/scan-worker-opengrep.Dockerfile
+    environment:
+      - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
+      - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+      - ARTIFACTS_DIR=/artifacts
+      - OPENGREP_BIN
+      - OPENGREP_CONFIG
+    volumes:
+      - artifacts:/artifacts
+
+  suppression-service-mock:
+    build:
+      context: .
+      dockerfile: docker/suppression-service-mock.Dockerfile
+    ports:
+      - "8090:8090"
+
+volumes:
+  artifacts: {}
