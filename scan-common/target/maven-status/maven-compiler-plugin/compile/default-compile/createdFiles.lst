@@ -1,6 +1,0 @@
-com\autotriage\common\model\ScanState.class
-com\autotriage\common\activity\ScanActivities.class
-com\autotriage\common\model\ScanRequest.class
-com\autotriage\common\model\ArtifactRef.class
-com\autotriage\common\model\ScanStatus.class
-com\autotriage\common\workflow\OpenGrepPRScanWorkflow.class

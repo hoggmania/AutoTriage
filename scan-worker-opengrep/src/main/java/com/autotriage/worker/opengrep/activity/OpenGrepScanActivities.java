@@ -4,6 +4,8 @@ import com.autotriage.common.activity.ScanActivities;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanStatus;
+import com.autotriage.common.model.SuppressionApplicationResult;
+
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
@@ -69,12 +71,12 @@ public class OpenGrepScanActivities implements ScanActivities {
     }
 
     @Override
-    public ArtifactRef applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
+    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
         throw new UnsupportedOperationException("applySuppressions is handled by filter worker");
     }
 
     @Override
-    public void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif) {
+    public  void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport) {
         throw new UnsupportedOperationException("uploadResults is handled by light worker");
     }
 
@@ -150,7 +152,7 @@ public class OpenGrepScanActivities implements ScanActivities {
              GzipCompressorInputStream gzipIn = new GzipCompressorInputStream(buffered);
              TarArchiveInputStream tarIn = new TarArchiveInputStream(gzipIn)) {
             TarArchiveEntry entry;
-            while ((entry = tarIn.getNextTarEntry()) != null) {
+            while ((entry = tarIn.getNextEntry()) != null) {
                 Path target = destDir.resolve(entry.getName()).normalize();
                 if (!target.startsWith(destDir)) {
                     continue;

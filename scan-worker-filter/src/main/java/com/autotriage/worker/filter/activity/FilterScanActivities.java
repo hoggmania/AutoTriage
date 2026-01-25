@@ -109,7 +109,7 @@ public class FilterScanActivities implements ScanActivities {
     }
 
     @Override
-    public void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif) {
+    public  void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport) {
         throw new UnsupportedOperationException("uploadResults is handled by light worker");
     }
 
@@ -207,7 +207,7 @@ public class FilterScanActivities implements ScanActivities {
              GzipCompressorInputStream gzipIn = new GzipCompressorInputStream(buffered);
              TarArchiveInputStream tarIn = new TarArchiveInputStream(gzipIn)) {
             TarArchiveEntry entry;
-            while ((entry = tarIn.getNextTarEntry()) != null) {
+            while ((entry = tarIn.getNextEntry()) != null) {
                 Path target = destDir.resolve(entry.getName()).normalize();
                 if (!target.startsWith(destDir)) {
                     continue;
