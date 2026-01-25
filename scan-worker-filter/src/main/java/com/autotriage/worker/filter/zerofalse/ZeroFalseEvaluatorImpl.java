@@ -52,8 +52,11 @@ public class ZeroFalseEvaluatorImpl implements ZeroFalseEvaluator {
             String sanitization = readField(node, "Sanitization Found?");
             String attackFeasible = readField(node, "Attack Feasible?");
             String confidence = readField(node, "Confidence");
+            Integer confidencePercent = parseConfidencePercent(
+                    readField(node, "ConfidencePercent"),
+                    confidence);
             boolean isFalsePositive = isYes(falsePositive);
-            return Optional.of(new ZeroFalseVerdict(isFalsePositive, sanitization, attackFeasible, confidence));
+            return Optional.of(new ZeroFalseVerdict(isFalsePositive, sanitization, attackFeasible, confidence, confidencePercent));
         } catch (Exception e) {
             log.debugv("ZeroFalse response parse failed: {0}", e.getMessage());
             return Optional.empty();
@@ -100,5 +103,46 @@ public class ZeroFalseEvaluatorImpl implements ZeroFalseEvaluator {
         }
         String normalized = value.trim().toLowerCase();
         return normalized.equals("yes") || normalized.equals("true");
+    }
+
+    private Integer parseConfidencePercent(String percentValue, String confidence) {
+        Integer parsed = parseInt(percentValue);
+        if (parsed != null) {
+            return clampPercent(parsed);
+        }
+        if (confidence == null) {
+            return null;
+        }
+        String normalized = confidence.trim().toLowerCase();
+        return switch (normalized) {
+            case "low" -> 20;
+            case "medium" -> 50;
+            case "high" -> 80;
+            default -> null;
+        };
+    }
+
+    private Integer parseInt(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value.trim().replace("%", ""));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Integer clampPercent(Integer value) {
+        if (value == null) {
+            return null;
+        }
+        if (value < 0) {
+            return 0;
+        }
+        if (value > 100) {
+            return 100;
+        }
+        return value;
     }
 }

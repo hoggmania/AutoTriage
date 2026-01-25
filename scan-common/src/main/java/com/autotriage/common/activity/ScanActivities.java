@@ -16,7 +16,10 @@ public interface ScanActivities {
 
     ArtifactRef runOpenGrep(ArtifactRef source, String runId);
 
-    SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle, ArtifactRef sourceArchive);
+    SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif,
+                                                   ArtifactRef suppressionBundle,
+                                                   ArtifactRef sourceArchive,
+                                                   ScanRequest request);
 
     void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport);
 

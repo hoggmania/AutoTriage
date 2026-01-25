@@ -1,0 +1,3 @@
+confidencePercent <= 30 ? "TRUE_POSITIVE" :
+confidencePercent <= 60 ? "POTENTIAL_FALSE_POSITIVE" :
+"FALSE_POSITIVE"

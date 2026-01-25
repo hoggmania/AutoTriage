@@ -103,7 +103,10 @@ public class LightScanActivities implements ScanActivities {
     }
 
     @Override
-    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle, ArtifactRef sourceArchive) {
+    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif,
+                                                          ArtifactRef suppressionBundle,
+                                                          ArtifactRef sourceArchive,
+                                                          ScanRequest request) {
         throw new UnsupportedOperationException("applySuppressions is handled by filter worker");
     }
 

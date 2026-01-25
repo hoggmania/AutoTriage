@@ -71,7 +71,8 @@ class FilterScanActivitiesTest {
         SuppressionApplicationResult result = activities.applySuppressions(
                 new ArtifactRef(rawSarif.toUri().toString(), "sarif-raw"),
                 new ArtifactRef(suppressionBundle.toUri().toString(), "suppression-bundle"),
-                new ArtifactRef("none://source", "source-archive"));
+                new ArtifactRef("none://source", "source-archive"),
+                createRequest("test-run", "https://example.com/repo.git", "abc123"));
 
         Path finalSarifPath = Path.of(URI.create(result.getFinalSarif().getUri()));
         JsonNode finalSarif = mapper.readTree(Files.readString(finalSarifPath, StandardCharsets.UTF_8));
@@ -100,7 +101,8 @@ class FilterScanActivitiesTest {
         SuppressionApplicationResult result = activities.applySuppressions(
                 new ArtifactRef(rawSarif.toUri().toString(), "sarif-raw"),
                 new ArtifactRef("none://suppressions", "suppression-bundle"),
-                new ArtifactRef("none://source", "source-archive"));
+                new ArtifactRef("none://source", "source-archive"),
+                createRequest("test-run", "https://example.com/repo.git", "abc123"));
 
         Path finalSarifPath = Path.of(URI.create(result.getFinalSarif().getUri()));
         JsonNode finalSarif = mapper.readTree(Files.readString(finalSarifPath, StandardCharsets.UTF_8));
@@ -195,5 +197,9 @@ class FilterScanActivitiesTest {
                         throw new RuntimeException("Failed to delete " + path, e);
                     }
                 });
+    }
+
+    private static com.autotriage.common.model.ScanRequest createRequest(String runId, String repository, String commitSha) {
+        return new com.autotriage.common.model.ScanRequest(runId, repository, commitSha, null, null, "main");
     }
 }

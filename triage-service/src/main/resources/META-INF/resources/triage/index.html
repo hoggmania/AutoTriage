@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AutoTriage Triage Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    label { display: block; margin-top: 12px; }
+    input, select, button { margin-top: 6px; padding: 6px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 12px; }
+    th { background: #f2f2f2; }
+    .actions button { margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h1>AutoTriage Triage Dashboard</h1>
+
+  <label for="token">JWT (role: secuirty:vuln_assessor:triager)</label>
+  <input id="token" type="password" placeholder="Paste JWT token" style="width: 100%;">
+
+  <label for="repo">Repository filter</label>
+  <input id="repo" type="text" placeholder="https://example.com/org/repo.git">
+
+  <label for="status">Status</label>
+  <select id="status">
+    <option value="">Any</option>
+    <option value="NEW">NEW</option>
+    <option value="TRIAGING">TRIAGING</option>
+    <option value="APPROVED">APPROVED</option>
+    <option value="DENIED">DENIED</option>
+  </select>
+
+  <button id="load">Load findings</button>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Repo</th>
+        <th>Commit</th>
+        <th>CWE</th>
+        <th>Confidence</th>
+        <th>Classification</th>
+        <th>Status</th>
+        <th>File</th>
+        <th>Line</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="findings"></tbody>
+  </table>
+
+  <script>
+    const tokenInput = document.getElementById('token');
+    const repoInput = document.getElementById('repo');
+    const statusSelect = document.getElementById('status');
+    const findingsBody = document.getElementById('findings');
+    const loadButton = document.getElementById('load');
+
+    function authHeaders() {
+      const token = tokenInput.value.trim();
+      return token ? { 'Authorization': `Bearer ${token}` } : {};
+    }
+
+    async function loadFindings() {
+      findingsBody.innerHTML = '';
+      const params = new URLSearchParams();
+      if (repoInput.value.trim()) params.set('repository', repoInput.value.trim());
+      if (statusSelect.value) params.set('status', statusSelect.value);
+      const response = await fetch(`/triage/findings?${params.toString()}`, {
+        headers: { ...authHeaders() }
+      });
+      if (!response.ok) {
+        alert(`Failed to load findings: ${response.status}`);
+        return;
+      }
+      const findings = await response.json();
+      for (const finding of findings) {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${finding.id}</td>
+          <td>${finding.repository || ''}</td>
+          <td>${finding.commitSha || ''}</td>
+          <td>${finding.cweId || ''}</td>
+          <td>${finding.confidencePercent ?? ''}%</td>
+          <td>${finding.classification || ''}</td>
+          <td>${finding.status || ''}</td>
+          <td>${finding.filePath || ''}</td>
+          <td>${finding.startLine ?? ''}</td>
+          <td class="actions"></td>
+        `;
+        const actionsCell = row.querySelector('.actions');
+        actionsCell.appendChild(actionButton('Claim', `/triage/findings/${finding.id}/claim`));
+        actionsCell.appendChild(actionButton('Approve', `/triage/findings/${finding.id}/approve`));
+        actionsCell.appendChild(actionButton('Deny', `/triage/findings/${finding.id}/deny`));
+        findingsBody.appendChild(row);
+      }
+    }
+
+    function actionButton(label, url) {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.onclick = async () => {
+        const response = await fetch(url, { method: 'POST', headers: { ...authHeaders() } });
+        if (!response.ok) {
+          alert(`${label} failed: ${response.status}`);
+          return;
+        }
+        await loadFindings();
+      };
+      return button;
+    }
+
+    loadButton.onclick = loadFindings;
+  </script>
+</body>
+</html>

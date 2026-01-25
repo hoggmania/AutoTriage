@@ -135,3 +135,11 @@
 - **Rationale:** Dedicated Deployments isolate failure modes and allow tuning per queue; OpenGrep is the main scaling hotspot so it benefits from HPA first.
 - **Consequences:** Resource defaults must be tuned per cluster; HPA requires metrics-server to be installed.
 - **Date:** 2026-01-25
+
+## ADR-0019: Triage service with CEL policy and JWT-secured review
+- **Context:** Low-confidence false positives must be persisted for human triage, classified consistently, and pushed back to repos as signed suppressions.
+- **Decision:** Add a `triage-service` (Quarkus + Postgres) that evaluates a repo-managed CEL policy from the default branch using only `cweId` and `confidencePercent`. Persist only "Potential False Positive" findings for review. Secure triage APIs with JWT role claim `secuirty:vuln_assessor:triager` and create suppression PRs via Git-over-HTTPS.
+- **Options considered:** (1) Hardcoded thresholds in the filter worker, (2) Central policy engine (OPA) with remote policy storage, (3) Repo-managed CEL policy with local evaluation.
+- **Rationale:** CEL keeps policy lightweight and repo-owned while enabling consistent classification; the triage service centralizes persistence, audit, and PR automation without expanding the workflow engine.
+- **Consequences:** The triage service requires Postgres and JWT configuration; policy changes land via default-branch updates; PR URL generation may need template config for each SCM.
+- **Date:** 2026-01-25

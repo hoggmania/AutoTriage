@@ -43,6 +43,7 @@ services:
       - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
       - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+      - TRIAGE_SERVICE_URL=${TRIAGE_SERVICE_URL:-http://triage-service:8095}
       - ARTIFACTS_DIR=/artifacts
     volumes:
       - artifacts:/artifacts
@@ -68,5 +69,36 @@ services:
     ports:
       - "8090:8090"
 
+  triage-db:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=${DB_NAME:-autotriage}
+      - POSTGRES_USER=${DB_USER:-autotriage}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-autotriage}
+    ports:
+      - "5432:5432"
+    volumes:
+      - triage-db:/var/lib/postgresql/data
+
+  triage-service:
+    build:
+      context: .
+      dockerfile: docker/triage-service.Dockerfile
+    environment:
+      - DB_HOST=triage-db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-autotriage}
+      - DB_USER=${DB_USER:-autotriage}
+      - DB_PASSWORD=${DB_PASSWORD:-autotriage}
+      - TRIAGE_POLICY_PATH=${TRIAGE_POLICY_PATH:-.autotriage/policy.cel}
+      - TRIAGE_POLICY_CACHE_MINUTES=${TRIAGE_POLICY_CACHE_MINUTES:-5}
+      - TRIAGE_PR_URL_TEMPLATE=${TRIAGE_PR_URL_TEMPLATE:-}
+      - MP_JWT_VERIFY_PUBLICKEY_LOCATION=${MP_JWT_VERIFY_PUBLICKEY_LOCATION:-}
+    ports:
+      - "8095:8095"
+    depends_on:
+      - triage-db
+
 volumes:
   artifacts: {}
+  triage-db: {}

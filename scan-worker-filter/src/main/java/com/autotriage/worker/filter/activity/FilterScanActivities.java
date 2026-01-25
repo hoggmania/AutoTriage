@@ -6,7 +6,11 @@ import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.SuppressionBundle;
+import com.autotriage.common.model.TriageCandidateRequest;
+import com.autotriage.common.model.TriageCandidateResponse;
+import com.autotriage.common.model.TriageClassification;
 import com.autotriage.worker.filter.model.SuppressionReport;
+import com.autotriage.worker.filter.triage.TriageClient;
 import com.autotriage.worker.filter.zerofalse.ZeroFalseContext;
 import com.autotriage.worker.filter.zerofalse.ZeroFalseContextBuilder;
 import com.autotriage.worker.filter.zerofalse.ZeroFalseCweResolver;
@@ -51,18 +55,21 @@ public class FilterScanActivities implements ScanActivities {
     private final ZeroFalsePromptLibrary promptLibrary;
     private final ZeroFalseContextBuilder contextBuilder;
     private final ZeroFalseEvaluator zeroFalseEvaluator;
+    private final TriageClient triageClient;
 
     public FilterScanActivities() {
-        this(new ZeroFalsePromptLibrary(), new ZeroFalseContextBuilder(), new ZeroFalseEvaluatorDisabled());
+        this(new ZeroFalsePromptLibrary(), new ZeroFalseContextBuilder(), new ZeroFalseEvaluatorDisabled(), new TriageClient());
     }
 
     @Inject
     public FilterScanActivities(ZeroFalsePromptLibrary promptLibrary,
                                 ZeroFalseContextBuilder contextBuilder,
-                                ZeroFalseEvaluator zeroFalseEvaluator) {
+                                ZeroFalseEvaluator zeroFalseEvaluator,
+                                TriageClient triageClient) {
         this.promptLibrary = promptLibrary;
         this.contextBuilder = contextBuilder;
         this.zeroFalseEvaluator = zeroFalseEvaluator;
+        this.triageClient = triageClient;
     }
 
     @Override
@@ -86,7 +93,10 @@ public class FilterScanActivities implements ScanActivities {
     }
 
     @Override
-    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle, ArtifactRef sourceArchive) {
+    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif,
+                                                          ArtifactRef suppressionBundle,
+                                                          ArtifactRef sourceArchive,
+                                                          ScanRequest request) {
         String sourceUri = sourceArchive == null ? "null" : sourceArchive.getUri();
         log.infov("applySuppressions rawUri={0} suppressionUri={1} sourceUri={2}", rawSarif.getUri(), suppressionBundle.getUri(), sourceUri);
         Path sourceRoot = null;
@@ -133,7 +143,7 @@ public class FilterScanActivities implements ScanActivities {
                 if (sourceRoot == null) {
                     log.warn("ZeroFalse enabled but source archive unavailable; skipping LLM suppressions");
                 } else {
-                    ZeroFalseResult zeroFalseResult = applyZeroFalseFiltering(filtered, runNode, sourceRoot, settings);
+                    ZeroFalseResult zeroFalseResult = applyZeroFalseFiltering(filtered, runNode, sourceRoot, settings, request);
                     filtered = zeroFalseResult.filtered();
                     llmSuppressed = zeroFalseResult.suppressed();
                 }
@@ -255,7 +265,11 @@ public class FilterScanActivities implements ScanActivities {
         return SuppressionDecision.APPLY;
     }
 
-    private ZeroFalseResult applyZeroFalseFiltering(ArrayNode candidates, JsonNode runNode, Path sourceRoot, ZeroFalseSettings settings) {
+    private ZeroFalseResult applyZeroFalseFiltering(ArrayNode candidates,
+                                                    JsonNode runNode,
+                                                    Path sourceRoot,
+                                                    ZeroFalseSettings settings,
+                                                    ScanRequest request) {
         ArrayNode filtered = mapper.createArrayNode();
         int suppressed = 0;
         int evaluated = 0;
@@ -273,7 +287,18 @@ public class FilterScanActivities implements ScanActivities {
             }
             String prompt = promptLibrary.render(cweId, context);
             Optional<ZeroFalseVerdict> verdict = zeroFalseEvaluator.evaluate(prompt);
-            if (verdict.isPresent() && verdict.get().falsePositive()) {
+            if (verdict.isEmpty() || verdict.get().confidencePercent() == null) {
+                filtered.add(result);
+                evaluated++;
+                continue;
+            }
+            ZeroFalseVerdict zeroFalseVerdict = verdict.get();
+            TriageCandidateRequest candidate = buildTriageCandidate(request, result, cweId, zeroFalseVerdict);
+            Optional<TriageCandidateResponse> triageResponse = triageClient.submitCandidate(candidate);
+            TriageClassification classification = triageResponse
+                    .map(TriageCandidateResponse::getClassification)
+                    .orElseGet(() -> classifyByThreshold(zeroFalseVerdict.confidencePercent()));
+            if (classification == TriageClassification.FALSE_POSITIVE) {
                 suppressed++;
             } else {
                 filtered.add(result);
@@ -281,6 +306,47 @@ public class FilterScanActivities implements ScanActivities {
             evaluated++;
         }
         return new ZeroFalseResult(filtered, suppressed);
+    }
+
+    private TriageCandidateRequest buildTriageCandidate(ScanRequest request,
+                                                        JsonNode result,
+                                                        String cweId,
+                                                        ZeroFalseVerdict verdict) {
+        String repository = request == null ? null : request.getRepository();
+        String commitSha = request == null ? null : request.getCommitSha();
+        String runId = request == null ? null : request.getRunId();
+        String ruleId = result.path("ruleId").asText(null);
+        String fingerprint = extractFingerprint(result);
+        String filePath = result.at("/locations/0/physicalLocation/artifactLocation/uri").asText(null);
+        Integer startLine = result.at("/locations/0/physicalLocation/region/startLine").isInt()
+                ? result.at("/locations/0/physicalLocation/region/startLine").asInt()
+                : null;
+        String message = result.path("message").path("text").asText(null);
+        return new TriageCandidateRequest(
+                repository,
+                commitSha,
+                runId,
+                cweId,
+                ruleId,
+                fingerprint,
+                filePath,
+                startLine,
+                verdict.confidencePercent(),
+                message);
+    }
+
+    private TriageClassification classifyByThreshold(Integer confidencePercent) {
+        if (confidencePercent == null) {
+            return TriageClassification.TRUE_POSITIVE;
+        }
+        int value = confidencePercent;
+        if (value <= 30) {
+            return TriageClassification.TRUE_POSITIVE;
+        }
+        if (value <= 60) {
+            return TriageClassification.POTENTIAL_FALSE_POSITIVE;
+        }
+        return TriageClassification.FALSE_POSITIVE;
     }
 
     private Path extractSourceArchive(ArtifactRef sourceArchive) {

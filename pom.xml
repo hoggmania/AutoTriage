@@ -17,6 +17,7 @@
         <module>scan-worker-light</module>
         <module>scan-worker-filter</module>
         <module>scan-worker-opengrep</module>
+        <module>triage-service</module>
         <module>suppression-service-mock</module>
     </modules>
 

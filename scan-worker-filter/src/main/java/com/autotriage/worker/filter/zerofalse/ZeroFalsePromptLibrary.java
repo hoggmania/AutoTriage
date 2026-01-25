@@ -101,7 +101,7 @@ public class ZeroFalsePromptLibrary {
                   "False Positive": "Yes" or "No",
                   "Sanitization Found?": "Yes" or "No" or "Unsure",
                   "Attack Feasible?": "Yes" or "No",
-                  "Confidence": "Low" or "Medium" or "High"
+                  "ConfidencePercent": 0-100
                 }
 
                 Code context:

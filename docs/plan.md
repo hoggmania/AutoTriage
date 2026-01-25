@@ -2,6 +2,8 @@ Here’s a **CODEX execution plan** for building the **self-hosted Temporal + Qu
 
 You can paste this directly into Codex as a “project brief / task plan”.
 
+For the triage workflow, see `docs/triage-plan.md`.
+
 ---
 
 ## CODEX Plan: Temporal OpenGrep Scan Platform (Quarkus/Java) with Decision Log

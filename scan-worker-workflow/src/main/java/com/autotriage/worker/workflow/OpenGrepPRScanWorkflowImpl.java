@@ -107,7 +107,7 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
             }
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Applying suppressions");
-            SuppressionApplicationResult suppressionResult = filterActivities.applySuppressions(rawSarif, suppressionArtifact, source);
+            SuppressionApplicationResult suppressionResult = filterActivities.applySuppressions(rawSarif, suppressionArtifact, source, request);
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Uploading results");
             lightActivities.uploadResults(request.getRunId(), suppressionResult.getFinalSarif(), rawSarif, suppressionResult.getSuppressionReport());
