@@ -7,10 +7,20 @@ import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.SuppressionBundle;
 import com.autotriage.worker.filter.model.SuppressionReport;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseContext;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseContextBuilder;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseCweResolver;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseEvaluator;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseEvaluatorDisabled;
+import com.autotriage.worker.filter.zerofalse.ZeroFalsePromptLibrary;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseSettings;
+import com.autotriage.worker.filter.zerofalse.ZeroFalseVerdict;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
@@ -30,11 +40,30 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Optional;
 
+@ApplicationScoped
 public class FilterScanActivities implements ScanActivities {
 
     private static final Logger log = Logger.getLogger(FilterScanActivities.class);
     private static final ObjectMapper mapper = new ObjectMapper();
+
+    private final ZeroFalsePromptLibrary promptLibrary;
+    private final ZeroFalseContextBuilder contextBuilder;
+    private final ZeroFalseEvaluator zeroFalseEvaluator;
+
+    public FilterScanActivities() {
+        this(new ZeroFalsePromptLibrary(), new ZeroFalseContextBuilder(), new ZeroFalseEvaluatorDisabled());
+    }
+
+    @Inject
+    public FilterScanActivities(ZeroFalsePromptLibrary promptLibrary,
+                                ZeroFalseContextBuilder contextBuilder,
+                                ZeroFalseEvaluator zeroFalseEvaluator) {
+        this.promptLibrary = promptLibrary;
+        this.contextBuilder = contextBuilder;
+        this.zeroFalseEvaluator = zeroFalseEvaluator;
+    }
 
     @Override
     public ArtifactRef resolveRepoSource(ScanRequest request) {
@@ -57,15 +86,18 @@ public class FilterScanActivities implements ScanActivities {
     }
 
     @Override
-    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle) {
-        log.infov("applySuppressions rawUri={0} suppressionUri={1}", rawSarif.getUri(), suppressionBundle.getUri());
+    public SuppressionApplicationResult applySuppressions(ArtifactRef rawSarif, ArtifactRef suppressionBundle, ArtifactRef sourceArchive) {
+        String sourceUri = sourceArchive == null ? "null" : sourceArchive.getUri();
+        log.infov("applySuppressions rawUri={0} suppressionUri={1} sourceUri={2}", rawSarif.getUri(), suppressionBundle.getUri(), sourceUri);
+        Path sourceRoot = null;
         try {
             Path rawPath = resolveFilePath(rawSarif.getUri());
             JsonNode sarif = mapper.readTree(Files.readString(rawPath, StandardCharsets.UTF_8));
-            ArrayNode results = (ArrayNode) sarif.at("/runs/0/results");
-            if (results == null) {
-                results = mapper.createArrayNode();
-            }
+            JsonNode runNode = sarif.at("/runs/0");
+            JsonNode resultsNode = sarif.at("/runs/0/results");
+            ArrayNode results = resultsNode != null && resultsNode.isArray()
+                    ? (ArrayNode) resultsNode
+                    : mapper.createArrayNode();
             Map<String, JsonNode> suppressions = loadSuppressions(suppressionBundle);
             ArrayNode filtered = mapper.createArrayNode();
             int suppressed = 0;
@@ -93,12 +125,29 @@ public class FilterScanActivities implements ScanActivities {
                     case NONE -> filtered.add(result);
                 }
             }
-            ((ObjectNode) sarif.at("/runs/0")).set("results", filtered);
+
+            ZeroFalseSettings settings = ZeroFalseSettings.fromConfig();
+            int llmSuppressed = 0;
+            if (settings.enabled()) {
+                sourceRoot = extractSourceArchive(sourceArchive);
+                if (sourceRoot == null) {
+                    log.warn("ZeroFalse enabled but source archive unavailable; skipping LLM suppressions");
+                } else {
+                    ZeroFalseResult zeroFalseResult = applyZeroFalseFiltering(filtered, runNode, sourceRoot, settings);
+                    filtered = zeroFalseResult.filtered();
+                    llmSuppressed = zeroFalseResult.suppressed();
+                }
+            }
+
+            if (runNode != null && runNode.isObject()) {
+                ((ObjectNode) runNode).set("results", filtered);
+            }
+
             Path artifactsDir = resolveArtifactsDir();
             Files.createDirectories(artifactsDir);
             Path finalSarifPath = artifactsDir.resolve("final-" + rawPath.getFileName().toString());
             Files.writeString(finalSarifPath, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(sarif), StandardCharsets.UTF_8);
-            SuppressionReport report = new SuppressionReport(suppressed, expired, invalid);
+            SuppressionReport report = new SuppressionReport(suppressed, expired, invalid, llmSuppressed);
             Path reportPath = artifactsDir.resolve("suppression-report-" + rawPath.getFileName().toString().replace(".sarif", ".json"));
             Files.writeString(reportPath, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report), StandardCharsets.UTF_8);
             return new SuppressionApplicationResult(
@@ -106,11 +155,15 @@ public class FilterScanActivities implements ScanActivities {
                     new ArtifactRef(reportPath.toUri().toString(), "suppression-report"));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to apply suppressions", e);
+        } finally {
+            if (sourceRoot != null) {
+                deleteRecursively(sourceRoot);
+            }
         }
     }
 
     @Override
-    public  void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport) {
+    public void uploadResults(String runId, ArtifactRef finalSarif, ArtifactRef rawSarif, ArtifactRef suppressionReport) {
         throw new UnsupportedOperationException("uploadResults is handled by light worker");
     }
 
@@ -202,6 +255,49 @@ public class FilterScanActivities implements ScanActivities {
         return SuppressionDecision.APPLY;
     }
 
+    private ZeroFalseResult applyZeroFalseFiltering(ArrayNode candidates, JsonNode runNode, Path sourceRoot, ZeroFalseSettings settings) {
+        ArrayNode filtered = mapper.createArrayNode();
+        int suppressed = 0;
+        int evaluated = 0;
+        int limit = settings.maxFindings();
+        for (JsonNode result : candidates) {
+            if (evaluated >= limit) {
+                filtered.add(result);
+                continue;
+            }
+            String cweId = ZeroFalseCweResolver.resolve(result, runNode);
+            ZeroFalseContext context = contextBuilder.build(sourceRoot, runNode, result, settings);
+            if (context.isEmpty()) {
+                filtered.add(result);
+                continue;
+            }
+            String prompt = promptLibrary.render(cweId, context);
+            Optional<ZeroFalseVerdict> verdict = zeroFalseEvaluator.evaluate(prompt);
+            if (verdict.isPresent() && verdict.get().falsePositive()) {
+                suppressed++;
+            } else {
+                filtered.add(result);
+            }
+            evaluated++;
+        }
+        return new ZeroFalseResult(filtered, suppressed);
+    }
+
+    private Path extractSourceArchive(ArtifactRef sourceArchive) {
+        if (sourceArchive == null || sourceArchive.getUri().startsWith("none://")) {
+            return null;
+        }
+        try {
+            Path archivePath = resolveFilePath(sourceArchive.getUri());
+            Path tempDir = Files.createTempDirectory("autotriage-source-context-");
+            extractTarGz(archivePath, tempDir);
+            return tempDir;
+        } catch (Exception e) {
+            log.warnv("Failed to extract source archive for ZeroFalse: {0}", e.getMessage());
+            return null;
+        }
+    }
+
     private void extractTarGz(Path archive, Path destDir) throws IOException {
         try (InputStream fileIn = Files.newInputStream(archive);
              BufferedInputStream buffered = new BufferedInputStream(fileIn);
@@ -246,5 +342,8 @@ public class FilterScanActivities implements ScanActivities {
         EXPIRED,
         INVALID,
         NONE
+    }
+
+    private record ZeroFalseResult(ArrayNode filtered, int suppressed) {
     }
 }

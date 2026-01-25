@@ -12,6 +12,7 @@ import io.temporal.worker.WorkerFactory;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
+import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -44,6 +45,9 @@ public class FilterWorkerBootstrap {
     private WorkflowServiceStubs serviceStubs;
     private WorkerFactory workerFactory;
 
+    @Inject
+    FilterScanActivities filterScanActivities;
+
     void onStart(@Observes StartupEvent event) {
         log.infov("Filter worker starting on queue scan-filter");
         serviceStubs = WorkflowServiceStubs.newServiceStubs(buildServiceOptions());
@@ -52,7 +56,7 @@ public class FilterWorkerBootstrap {
                 .build());
         workerFactory = WorkerFactory.newInstance(client);
         Worker worker = workerFactory.newWorker("scan-filter");
-        worker.registerActivitiesImplementations(new FilterScanActivities());
+        worker.registerActivitiesImplementations(filterScanActivities);
         workerFactory.start();
     }
 

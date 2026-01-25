@@ -70,7 +70,8 @@ class FilterScanActivitiesTest {
         FilterScanActivities activities = new FilterScanActivities();
         SuppressionApplicationResult result = activities.applySuppressions(
                 new ArtifactRef(rawSarif.toUri().toString(), "sarif-raw"),
-                new ArtifactRef(suppressionBundle.toUri().toString(), "suppression-bundle"));
+                new ArtifactRef(suppressionBundle.toUri().toString(), "suppression-bundle"),
+                new ArtifactRef("none://source", "source-archive"));
 
         Path finalSarifPath = Path.of(URI.create(result.getFinalSarif().getUri()));
         JsonNode finalSarif = mapper.readTree(Files.readString(finalSarifPath, StandardCharsets.UTF_8));
@@ -84,6 +85,7 @@ class FilterScanActivitiesTest {
         assertEquals(2, report.path("suppressedCount").asInt());
         assertEquals(1, report.path("expiredCount").asInt());
         assertEquals(1, report.path("invalidCount").asInt());
+        assertEquals(0, report.path("llmSuppressedCount").asInt());
     }
 
     @Test
@@ -97,7 +99,8 @@ class FilterScanActivitiesTest {
         FilterScanActivities activities = new FilterScanActivities();
         SuppressionApplicationResult result = activities.applySuppressions(
                 new ArtifactRef(rawSarif.toUri().toString(), "sarif-raw"),
-                new ArtifactRef("none://suppressions", "suppression-bundle"));
+                new ArtifactRef("none://suppressions", "suppression-bundle"),
+                new ArtifactRef("none://source", "source-archive"));
 
         Path finalSarifPath = Path.of(URI.create(result.getFinalSarif().getUri()));
         JsonNode finalSarif = mapper.readTree(Files.readString(finalSarifPath, StandardCharsets.UTF_8));
@@ -111,6 +114,7 @@ class FilterScanActivitiesTest {
         assertEquals(0, report.path("suppressedCount").asInt());
         assertEquals(0, report.path("expiredCount").asInt());
         assertEquals(0, report.path("invalidCount").asInt());
+        assertEquals(0, report.path("llmSuppressedCount").asInt());
     }
 
     private static ObjectNode createResult(String ruleId, String fingerprint, int startLine) {

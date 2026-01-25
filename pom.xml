@@ -27,6 +27,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.version>3.1.0.Final</quarkus.platform.version>
+        <quarkiverse.langchain4j.version>0.26.1</quarkiverse.langchain4j.version>
         <temporal.version>1.20.1</temporal.version>
     </properties>
 
@@ -36,6 +37,13 @@
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
                 <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.quarkiverse.langchain4j</groupId>
+                <artifactId>quarkus-langchain4j-bom</artifactId>
+                <version>${quarkiverse.langchain4j.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

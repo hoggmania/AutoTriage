@@ -10,7 +10,8 @@
 7. For repo cloning in the light worker, ensure `git` is installed and set `GIT_CLONE_TOKEN` if required for private repositories.
 8. Optional: set `ARTIFACTS_DIR=artifacts` to control where the source tarball and suppression bundle are written.
 9. Configure the OpenGrep worker with `OPENGREP_BIN=opengrep` and `OPENGREP_CONFIG=/path/to/rules.yml` to generate SARIF (it writes stub SARIF if unset).
-10. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
+10. Optional: enable ZeroFalse LLM suppressions in the filter worker with `ZEROFALSE_ENABLED=true` and configure a Quarkus LangChain4j provider (for example `quarkus.langchain4j.openai.*`).
+11. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
 
 ## Podman Compose Run
 1. Start a Temporal dev server on the host (or set `TEMPORAL_TARGET` to your cluster).
