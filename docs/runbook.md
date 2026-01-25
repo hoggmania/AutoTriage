@@ -11,7 +11,8 @@
 8. Optional: set `ARTIFACTS_DIR=artifacts` to control where the source tarball and suppression bundle are written.
 9. Configure the OpenGrep worker with `OPENGREP_BIN=opengrep` and `OPENGREP_CONFIG=/path/to/rules.yml` to generate SARIF (it writes stub SARIF if unset).
 10. Optional: enable ZeroFalse LLM suppressions in the filter worker with `ZEROFALSE_ENABLED=true` and configure a Quarkus LangChain4j provider (for example `quarkus.langchain4j.openai.*`).
-11. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
+11. Optional tuning for ZeroFalse: `ZEROFALSE_MAX_FINDINGS`, `ZEROFALSE_MAX_TRACE_STEPS`, `ZEROFALSE_CONTEXT_LINES_BEFORE`, `ZEROFALSE_CONTEXT_LINES_AFTER`, `ZEROFALSE_PROMPTS_VARIANT`.
+12. Use cURL to POST `/scans` and watch Temporal Web UI for workflow progress; `/scans/{runId}` returns structured status.
 
 ## Podman Compose Run
 1. Start a Temporal dev server on the host (or set `TEMPORAL_TARGET` to your cluster).
