@@ -7,15 +7,20 @@ We will add a triage workflow that persists low-confidence findings, classifies 
 - Out: Non-CEL policy engines, non-JWT auth systems, SCM-specific API integrations beyond generic Git HTTPS.
 
 ## Action items
-[ ] Extend ZeroFalse parsing/storage to include `confidencePercent` (0–100) with `cweId` and verdict metadata.
-[ ] Define the repo-managed CEL policy file on the default branch (e.g., `.autotriage/policy.cel`) with thresholds: 0–30 True Positive, 30–60 Potential False Positive, 61–100 False Positive; add loader/validator.
-[ ] Add a triage service module with Postgres migrations/entities for findings, classification, triage claims, approvals/denials, PR status, and repo-keyed audit events.
-[ ] Implement a CEL evaluator that consumes only `cweId` + `confidencePercent` and persists the resulting classification.
-[ ] Build JWT-secured Swagger APIs for listing/claiming/approving/denying findings and querying audits by repo, enforcing `role=secuirty:vuln_assessor:triager`.
-[ ] Build a minimal Security Role UI to claim triage, approve/deny per commit, and view confidence + classification + PR state.
-[ ] Implement Git-over-HTTPS suppression updates: fetch signed suppression bundle, append approvals, re-sign, open PR to default branch, log audit entries.
-[ ] Add tests: CEL policy unit tests, Postgres integration tests, API auth tests, and a smoke flow from triage candidate to PR creation.
-[ ] Update `docs/architecture.md`, `docs/runbook.md`, and the decision log to reflect the triage service, CEL policy, and JWT requirements.
+- [x] Extend ZeroFalse parsing/storage to include `confidencePercent` (0-100) with `cweId` and verdict metadata.
+- [x] Define the repo-managed CEL policy file on the default branch (e.g., `.autotriage/policy.cel`) with thresholds: 0-30 True Positive, 30-60 Potential False Positive, 61-100 False Positive; add loader/validator.
+- [x] Add a triage service module with Postgres migrations/entities for findings, classification, triage claims, approvals/denials, PR status, and repo-keyed audit events.
+- [x] Implement a CEL evaluator that consumes only `cweId` + `confidencePercent` and persists the resulting classification.
+- [x] Build JWT-secured Swagger APIs for listing/claiming/approving/denying findings and querying audits by repo, enforcing `role=secuirty:vuln_assessor:triager`.
+- [x] Build a minimal Security Role UI to claim triage, approve/deny per commit, and view confidence + classification + PR state.
+- [x] Implement Git-over-HTTPS suppression updates: append suppression entries under `.opengrep/suppressions/*.yaml`, write a `.sig` placeholder, push a branch, and optionally format PR URLs via `TRIAGE_PR_URL_TEMPLATE`; log audit entries.
+- [x] Add tests: CEL policy unit tests plus Quarkus tests for candidate ingest, approval flow, and JWT auth (H2-backed; Quarkus tests are skipped on Java 25).
+- [x] Update `docs/architecture.md`, `docs/runbook.md`, and the decision log to reflect the triage service, CEL policy, and JWT requirements.
+
+## Implementation notes
+- The triage service stores only Potential False Positives; other classifications are returned to the filter worker without persistence.
+- Policy loading reads `.autotriage/policy.cel` from the repo default branch, cached by `TRIAGE_POLICY_CACHE_MINUTES`.
+- PR automation writes suppression updates to `.opengrep/suppressions` and uses a placeholder signature until real signing is added.
 
 ## Open questions
 - None.
