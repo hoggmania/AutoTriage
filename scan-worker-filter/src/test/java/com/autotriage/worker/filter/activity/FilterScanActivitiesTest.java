@@ -160,8 +160,14 @@ class FilterScanActivitiesTest {
     }
 
     private static void writeSuppressionBundle(Path bundlePath, ArrayNode suppressions) throws IOException {
-        String content = mapper.writeValueAsString(suppressions);
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        StringBuilder content = new StringBuilder();
+        for (JsonNode suppression : suppressions) {
+            content.append("- fingerprint: ").append(suppression.path("fingerprint").asText()).append('\n');
+            if (suppression.hasNonNull("expiresAt")) {
+                content.append("  expiresAt: \"").append(suppression.path("expiresAt").asText()).append("\"\n");
+            }
+        }
+        byte[] bytes = content.toString().getBytes(StandardCharsets.UTF_8);
         try (OutputStream fileOut = Files.newOutputStream(bundlePath);
              BufferedOutputStream buffered = new BufferedOutputStream(fileOut);
              GzipCompressorOutputStream gzipOut = new GzipCompressorOutputStream(buffered);

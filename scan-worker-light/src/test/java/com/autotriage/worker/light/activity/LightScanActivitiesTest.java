@@ -10,6 +10,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +27,7 @@ class LightScanActivitiesTest {
     @AfterAll
     static void cleanup() throws IOException {
         clearGatePolicy();
+        System.clearProperty("git.clone.token");
         deleteRecursively(tempRoot);
     }
 
@@ -58,6 +60,36 @@ class LightScanActivitiesTest {
 
         assertEquals(ScanState.COMPLETED, status.getState());
         assertTrue(status.getMessage().contains("Verdict: PASS"));
+    }
+
+    @Test
+    void buildCloneUrl_injectsEncodedTokenForHttpsRepository() throws Exception {
+        System.setProperty("git.clone.token", "tok:en@with space");
+        try {
+            String cloneUrl = invokeBuildCloneUrl("https://github.com/example/repo.git");
+
+            assertEquals("https://x-access-token:tok%3Aen%40with%20space@github.com/example/repo.git", cloneUrl);
+        } finally {
+            System.clearProperty("git.clone.token");
+        }
+    }
+
+    @Test
+    void buildCloneUrl_leavesNonHttpsRepositoryUnchanged() throws Exception {
+        System.setProperty("git.clone.token", "secret-token");
+        try {
+            String cloneUrl = invokeBuildCloneUrl("git@github.com:example/repo.git");
+
+            assertEquals("git@github.com:example/repo.git", cloneUrl);
+        } finally {
+            System.clearProperty("git.clone.token");
+        }
+    }
+
+    private static String invokeBuildCloneUrl(String repository) throws Exception {
+        Method method = LightScanActivities.class.getDeclaredMethod("buildCloneUrl", String.class);
+        method.setAccessible(true);
+        return (String) method.invoke(new LightScanActivities(), repository);
     }
 
     private static void setGatePolicy(String failOnAny, String maxHigh, String maxMedium, String maxLow) {

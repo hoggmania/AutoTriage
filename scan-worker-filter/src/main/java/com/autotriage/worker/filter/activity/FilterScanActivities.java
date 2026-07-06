@@ -21,6 +21,7 @@ import com.autotriage.worker.filter.zerofalse.ZeroFalseSettings;
 import com.autotriage.worker.filter.zerofalse.ZeroFalseVerdict;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -51,6 +52,7 @@ public class FilterScanActivities implements ScanActivities {
 
     private static final Logger log = Logger.getLogger(FilterScanActivities.class);
     private static final ObjectMapper mapper = new ObjectMapper();
+    private static final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
 
     private final ZeroFalsePromptLibrary promptLibrary;
     private final ZeroFalseContextBuilder contextBuilder;
@@ -210,7 +212,7 @@ public class FilterScanActivities implements ScanActivities {
                     .filter(path -> path.toString().endsWith(".yml") || path.toString().endsWith(".yaml"))
                     .forEach(path -> {
                         try {
-                            JsonNode root = mapper.readTree(path.toFile());
+                            JsonNode root = yamlMapper.readTree(path.toFile());
                             if (root.isArray()) {
                                 for (JsonNode entry : root) {
                                     String fp = entry.path("fingerprint").asText(null);

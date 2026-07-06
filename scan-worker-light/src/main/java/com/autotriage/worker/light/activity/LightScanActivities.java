@@ -10,8 +10,8 @@ import com.autotriage.common.model.SuppressionBundle;
 import com.autotriage.common.model.SuppressionSource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.autotriage.worker.light.security.ConfigurableSuppressionSignatureVerifier;
 import com.autotriage.worker.light.security.SuppressionSignatureVerifier;
-import com.autotriage.worker.light.security.TestKeySuppressionSignatureVerifier;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -43,7 +44,7 @@ public class LightScanActivities implements ScanActivities {
     private static final Logger log = Logger.getLogger(LightScanActivities.class);
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(2);
-    private static final SuppressionSignatureVerifier signatureVerifier = new TestKeySuppressionSignatureVerifier();
+    private static final SuppressionSignatureVerifier signatureVerifier = new ConfigurableSuppressionSignatureVerifier();
 
     @Override
     public ArtifactRef resolveRepoSource(ScanRequest request) {
@@ -186,7 +187,9 @@ public class LightScanActivities implements ScanActivities {
     private String buildCloneUrl(String repository) {
         Optional<String> token = ConfigProvider.getConfig().getOptionalValue("git.clone.token", String.class);
         if (token.isPresent() && repository.startsWith("https://")) {
-            return repository.replace("https://", "https://x-access-token:" + token.get() + "@");
+            String encodedToken = URLEncoder.encode(token.get(), StandardCharsets.UTF_8)
+                    .replace("+", "%20");
+            return repository.replaceFirst("^https://", "https://x-access-token:" + encodedToken + "@");
         }
         return repository;
     }
@@ -202,11 +205,23 @@ public class LightScanActivities implements ScanActivities {
         boolean finished = process.waitFor(PROCESS_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         if (!finished) {
             process.destroyForcibly();
-            throw new IllegalStateException("Command timed out: " + String.join(" ", command));
+            throw new IllegalStateException("Command timed out: " + redactCommand(command));
         }
         if (process.exitValue() != 0) {
-            throw new IllegalStateException("Command failed: " + String.join(" ", command) + " output=" + output);
+            throw new IllegalStateException("Command failed: " + redactCommand(command) + " output=" + redactSecrets(output));
         }
+    }
+
+    private String redactCommand(String[] command) {
+        String joined = String.join(" ", command);
+        return redactSecrets(joined);
+    }
+
+    private String redactSecrets(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replaceAll("https://[^:@\\s]+:[^@\\s]+@", "https://***:***@");
     }
 
     private Path resolveArtifactsDir() {
@@ -318,7 +333,6 @@ public class LightScanActivities implements ScanActivities {
             String safeRef = sanitizeRef(ref);
             Path archivePath = artifactsDir.resolve("suppressions-" + safeRef + ".tar.gz");
             createTarGzArchive(suppressionsDir, archivePath);
-            Files.writeString(Path.of(archivePath.toString() + ".sig"), "TEST-SIGNATURE");
             return new SuppressionBundle(new ArtifactRef(archivePath.toUri().toString(), "suppression-bundle"), source);
         } finally {
             if (workspace != null) {

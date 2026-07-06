@@ -21,7 +21,7 @@ import static io.restassured.RestAssured.given;
 class TriageAuthTest {
 
     private static final String ISSUER = "https://autotriage.test";
-    private static final String ROLE = "secuirty:vuln_assessor:triager";
+    private static final String ROLE = "security:vuln_assessor:triager";
 
     @Test
     void deniesAccessWithoutToken() {

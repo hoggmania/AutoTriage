@@ -6,6 +6,9 @@ RUN mvn -pl suppression-service-mock -am clean package -DskipTests
 
 FROM eclipse-temurin:17-jdk
 WORKDIR /app
-COPY --from=build /workspace/suppression-service-mock/target/*.jar /app/app.jar
 EXPOSE 8090
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+COPY --from=build /workspace/suppression-service-mock/target/quarkus-app/lib/ /app/lib/
+COPY --from=build /workspace/suppression-service-mock/target/quarkus-app/*.jar /app/
+COPY --from=build /workspace/suppression-service-mock/target/quarkus-app/app/ /app/app/
+COPY --from=build /workspace/suppression-service-mock/target/quarkus-app/quarkus/ /app/quarkus/
+ENTRYPOINT ["java", "-jar", "/app/quarkus-run.jar"]

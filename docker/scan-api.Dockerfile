@@ -6,6 +6,9 @@ RUN mvn -pl scan-api -am clean package -DskipTests
 
 FROM eclipse-temurin:17-jdk
 WORKDIR /app
-COPY --from=build /workspace/scan-api/target/*.jar /app/app.jar
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+COPY --from=build /workspace/scan-api/target/quarkus-app/lib/ /app/lib/
+COPY --from=build /workspace/scan-api/target/quarkus-app/*.jar /app/
+COPY --from=build /workspace/scan-api/target/quarkus-app/app/ /app/app/
+COPY --from=build /workspace/scan-api/target/quarkus-app/quarkus/ /app/quarkus/
+ENTRYPOINT ["java", "-jar", "/app/quarkus-run.jar"]

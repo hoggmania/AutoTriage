@@ -12,6 +12,9 @@ import org.jboss.logging.Logger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @ApplicationScoped
 public class RepoPolicyLoader {
@@ -29,6 +32,10 @@ public class RepoPolicyLoader {
 
     public String loadPolicy(String repositoryUrl) {
         if (repositoryUrl == null || repositoryUrl.isBlank()) {
+            return null;
+        }
+        if (!isAllowedRepository(repositoryUrl)) {
+            log.warnv("Skipping triage policy clone for non-allowlisted repository {0}", repositoryUrl);
             return null;
         }
         CredentialsProvider provider = credentialsProvider.build();
@@ -51,5 +58,16 @@ public class RepoPolicyLoader {
         } finally {
             gitRepositoryService.deleteWorkspace(tempDir);
         }
+    }
+
+    private boolean isAllowedRepository(String repositoryUrl) {
+        String allowlist = ConfigProvider.getConfig()
+                .getOptionalValue("triage.policy.repository-allowlist", String.class)
+                .orElse("");
+        Set<String> allowedRepositories = Arrays.stream(allowlist.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .collect(Collectors.toSet());
+        return !allowedRepositories.isEmpty() && allowedRepositories.contains(repositoryUrl);
     }
 }

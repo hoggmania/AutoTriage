@@ -6,5 +6,8 @@ RUN mvn -pl scan-worker-light -am clean package -DskipTests
 
 FROM eclipse-temurin:17-jdk
 WORKDIR /app
-COPY --from=build /workspace/scan-worker-light/target/*.jar /app/app.jar
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+COPY --from=build /workspace/scan-worker-light/target/quarkus-app/lib/ /app/lib/
+COPY --from=build /workspace/scan-worker-light/target/quarkus-app/*.jar /app/
+COPY --from=build /workspace/scan-worker-light/target/quarkus-app/app/ /app/app/
+COPY --from=build /workspace/scan-worker-light/target/quarkus-app/quarkus/ /app/quarkus/
+ENTRYPOINT ["java", "-jar", "/app/quarkus-run.jar"]

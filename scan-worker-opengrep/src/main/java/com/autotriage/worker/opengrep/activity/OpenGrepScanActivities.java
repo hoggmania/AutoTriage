@@ -7,6 +7,7 @@ import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.SuppressionBundle;
 
+import io.temporal.activity.Activity;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
@@ -24,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public class OpenGrepScanActivities implements ScanActivities {
@@ -57,10 +59,7 @@ public class OpenGrepScanActivities implements ScanActivities {
             Path artifactsDir = resolveArtifactsDir();
             Files.createDirectories(artifactsDir);
             Path sarifPath = artifactsDir.resolve("raw-" + runId + ".sarif");
-            boolean ran = runOpenGrepCommand(workspace, sarifPath);
-            if (!ran) {
-                writeStubSarif(sarifPath, runId);
-            }
+            runOpenGrepCommand(workspace, sarifPath);
             return new ArtifactRef(sarifPath.toUri().toString(), "sarif-raw");
         } catch (Exception e) {
             throw new IllegalStateException("Failed to run OpenGrep", e);
@@ -104,12 +103,13 @@ public class OpenGrepScanActivities implements ScanActivities {
         return Path.of(dir);
     }
 
-    private boolean runOpenGrepCommand(Path workspace, Path sarifPath) throws IOException, InterruptedException {
-        Optional<String> binary = ConfigProvider.getConfig().getOptionalValue("opengrep.bin", String.class);
-        Optional<String> config = ConfigProvider.getConfig().getOptionalValue("opengrep.config", String.class);
+    private void runOpenGrepCommand(Path workspace, Path sarifPath) throws IOException, InterruptedException {
+        Optional<String> binary = ConfigProvider.getConfig().getOptionalValue("opengrep.bin", String.class)
+                .filter(value -> !value.isBlank());
+        Optional<String> config = ConfigProvider.getConfig().getOptionalValue("opengrep.config", String.class)
+                .filter(value -> !value.isBlank());
         if (binary.isEmpty() || config.isEmpty()) {
-            log.warn("OpenGrep binary/config not configured, writing stub SARIF instead");
-            return false;
+            throw new IllegalStateException("OpenGrep binary/config not configured; refusing to produce a clean stub result");
         }
         String[] command = new String[] {
                 binary.get(),
@@ -121,33 +121,40 @@ public class OpenGrepScanActivities implements ScanActivities {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         Process process = builder.start();
-        String output;
-        try (InputStream stream = process.getInputStream()) {
-            output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> readProcessOutput(process));
+        long deadline = System.nanoTime() + PROCESS_TIMEOUT.toNanos();
+        while (process.isAlive()) {
+            heartbeat("OpenGrep still running");
+            if (System.nanoTime() >= deadline) {
+                process.destroyForcibly();
+                throw new IllegalStateException("OpenGrep timed out");
+            }
+            process.waitFor(10, TimeUnit.SECONDS);
         }
-        boolean finished = process.waitFor(PROCESS_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            throw new IllegalStateException("OpenGrep timed out");
-        }
+        String output = outputFuture.join();
+        heartbeat("OpenGrep completed");
         if (process.exitValue() != 0) {
             throw new IllegalStateException("OpenGrep failed: " + output);
         }
-        return true;
+        if (!Files.exists(sarifPath)) {
+            throw new IllegalStateException("OpenGrep completed without writing SARIF output");
+        }
     }
 
-    private void writeStubSarif(Path sarifPath, String runId) throws IOException {
-        String sarif = "{\n" +
-                "  \"version\": \"2.1.0\",\n" +
-                "  \"runs\": [\n" +
-                "    {\n" +
-                "      \"tool\": {\"driver\": {\"name\": \"OpenGrep\", \"version\": \"stub\"}},\n" +
-                "      \"results\": []\n" +
-                "    }\n" +
-                "  ],\n" +
-                "  \"properties\": {\"runId\": \"" + runId + "\"}\n" +
-                "}\n";
-        Files.writeString(sarifPath, sarif, StandardCharsets.UTF_8);
+    private String readProcessOutput(Process process) {
+        try (InputStream stream = process.getInputStream()) {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "<failed to read OpenGrep output: " + e.getMessage() + ">";
+        }
+    }
+
+    private void heartbeat(String detail) {
+        try {
+            Activity.getExecutionContext().heartbeat(detail);
+        } catch (RuntimeException ignored) {
+            // Unit tests may invoke this activity outside a Temporal activity context.
+        }
     }
 
     private void extractTarGz(Path archive, Path destDir) throws IOException {

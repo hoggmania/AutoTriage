@@ -1,7 +1,7 @@
 package com.autotriage.triage.api;
 
 import com.autotriage.common.model.TriageCandidateRequest;
-import com.autotriage.common.model.TriageCandidateResponse;
+
 import com.autotriage.triage.model.AuditEventEntity;
 import com.autotriage.triage.model.FindingEntity;
 import com.autotriage.triage.model.FindingStatus;
@@ -14,6 +14,7 @@ import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -21,8 +22,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.config.ConfigProvider;
 
+import java.net.URI;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -30,7 +34,7 @@ import java.util.stream.Collectors;
 @Produces(MediaType.APPLICATION_JSON)
 public class TriageResource {
 
-    private static final String TRIAGE_ROLE = "secuirty:vuln_assessor:triager";
+    private static final String TRIAGE_ROLE = "security:vuln_assessor:triager";
 
     @Inject
     TriageCandidateService candidateService;
@@ -45,8 +49,15 @@ public class TriageResource {
     @Path("/candidates")
     @PermitAll
     @Consumes(MediaType.APPLICATION_JSON)
-    public TriageCandidateResponse ingestCandidate(TriageCandidateRequest request) {
-        return candidateService.ingest(request);
+    public Response ingestCandidate(@HeaderParam("Authorization") String authorization,
+                                    TriageCandidateRequest request) {
+        if (!isIngestAuthorized(authorization)) {
+            return Response.status(Response.Status.UNAUTHORIZED).build();
+        }
+        if (request == null || !isRepositoryAllowed(request.getRepository())) {
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        return Response.ok(candidateService.ingest(request)).build();
     }
 
     @GET
@@ -115,5 +126,42 @@ public class TriageResource {
         return identity == null || identity.getPrincipal() == null
                 ? "unknown"
                 : identity.getPrincipal().getName();
+    }
+
+    private boolean isIngestAuthorized(String authorization) {
+        Optional<String> token = ConfigProvider.getConfig()
+                .getOptionalValue("triage.ingest.token", String.class)
+                .filter(value -> !value.isBlank());
+        boolean allowUnauthenticated = ConfigProvider.getConfig()
+                .getOptionalValue("triage.ingest.allow-unauthenticated", Boolean.class)
+                .orElse(false);
+        if (token.isEmpty()) {
+            return allowUnauthenticated;
+        }
+        return ("Bearer " + token.get()).equals(authorization);
+    }
+
+    private boolean isRepositoryAllowed(String repository) {
+        if (repository == null || repository.isBlank()) {
+            return false;
+        }
+        String allowedHosts = ConfigProvider.getConfig()
+                .getOptionalValue("triage.repository.allowed-hosts", String.class)
+                .orElse("github.com");
+        try {
+            URI uri = URI.create(repository);
+            String host = uri.getHost();
+            if (host == null || !("https".equalsIgnoreCase(uri.getScheme()) || "ssh".equalsIgnoreCase(uri.getScheme()))) {
+                return false;
+            }
+            for (String allowedHost : allowedHosts.split(",")) {
+                if (host.equalsIgnoreCase(allowedHost.trim())) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

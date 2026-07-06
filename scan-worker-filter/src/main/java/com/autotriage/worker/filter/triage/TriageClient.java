@@ -29,6 +29,13 @@ public class TriageClient {
         if (baseUrl.isBlank()) {
             return Optional.empty();
         }
+        Optional<String> ingestToken = ConfigProvider.getConfig()
+                .getOptionalValue("triage.ingest.token", String.class)
+                .filter(value -> !value.isBlank());
+        if (ingestToken.isEmpty()) {
+            log.warn("Triage service URL configured but triage.ingest.token is missing; skipping candidate submission");
+            return Optional.empty();
+        }
         String endpoint = baseUrl.endsWith("/") ? baseUrl + "triage/candidates" : baseUrl + "/triage/candidates";
         try {
             String body = mapper.writeValueAsString(request);
@@ -36,6 +43,7 @@ public class TriageClient {
                     .uri(URI.create(endpoint))
                     .timeout(REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + ingestToken.get())
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
             HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());

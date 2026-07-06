@@ -126,7 +126,7 @@ Triage:
 - `TRIAGE_POLICY_PATH`
 - `TRIAGE_POLICY_CACHE_MINUTES`
 - `TRIAGE_PR_URL_TEMPLATE`
-- JWT role claim must include `secuirty:vuln_assessor:triager`
+- JWT role claim must include `security:vuln_assessor:triager`
 
 ## Related Docs
 

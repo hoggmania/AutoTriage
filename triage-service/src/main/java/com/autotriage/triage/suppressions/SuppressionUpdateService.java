@@ -5,6 +5,7 @@ import com.autotriage.triage.git.GitRepositoryService;
 import com.autotriage.triage.model.FindingEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -14,10 +15,13 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.jboss.logging.Logger;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Optional;
 
 @ApplicationScoped
@@ -25,7 +29,9 @@ public class SuppressionUpdateService {
 
     private static final Logger log = Logger.getLogger(SuppressionUpdateService.class);
     private static final ObjectMapper mapper = new ObjectMapper();
-    private static final String SIGNATURE = "TEST-SIGNATURE";
+    private static final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
+    private static final String HMAC_SHA256 = "HmacSHA256";
+    private static final String TEST_SIGNATURE = "TEST-SIGNATURE";
 
     private final GitRepositoryService gitRepositoryService;
     private final GitCredentialsProvider credentialsProvider;
@@ -63,9 +69,10 @@ public class SuppressionUpdateService {
                     entry.put("createdAt", Instant.now().toString());
                     entries.add(entry);
                 }
-                Files.writeString(suppressionFile, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(entries), StandardCharsets.UTF_8);
+                String serializedSuppressions = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(entries);
+                Files.writeString(suppressionFile, serializedSuppressions, StandardCharsets.UTF_8);
                 Path signatureFile = Path.of(suppressionFile.toString() + ".sig");
-                Files.writeString(signatureFile, SIGNATURE, StandardCharsets.UTF_8);
+                Files.writeString(signatureFile, signatureFor(serializedSuppressions.getBytes(StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
 
                 git.add().addFilepattern(".opengrep/suppressions").call();
                 git.commit()
@@ -104,7 +111,7 @@ public class SuppressionUpdateService {
             return mapper.createArrayNode();
         }
         try {
-            JsonNode node = mapper.readTree(file.toFile());
+            JsonNode node = yamlMapper.readTree(file.toFile());
             if (node.isArray()) {
                 return (ArrayNode) node;
             }
@@ -129,6 +136,24 @@ public class SuppressionUpdateService {
             }
         }
         return false;
+    }
+
+    private String signatureFor(byte[] content) throws Exception {
+        Optional<String> secret = ConfigProvider.getConfig()
+                .getOptionalValue("suppression.signature.hmac-secret", String.class)
+                .filter(value -> !value.isBlank());
+        if (secret.isPresent()) {
+            Mac mac = Mac.getInstance(HMAC_SHA256);
+            mac.init(new SecretKeySpec(secret.get().getBytes(StandardCharsets.UTF_8), HMAC_SHA256));
+            return "hmac-sha256:" + HexFormat.of().formatHex(mac.doFinal(content));
+        }
+        boolean allowTestSignature = ConfigProvider.getConfig()
+                .getOptionalValue("suppression.signature.allow-test-signature", Boolean.class)
+                .orElse(false);
+        if (allowTestSignature) {
+            return TEST_SIGNATURE;
+        }
+        throw new IllegalStateException("suppression.signature.hmac-secret is required to sign suppression updates");
     }
 
     private String buildPrUrl(String repoUrl, String baseBranch, String branchName) {

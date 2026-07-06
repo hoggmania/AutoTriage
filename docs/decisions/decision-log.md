@@ -106,9 +106,9 @@
 
 ## ADR-0011: OpenGrep invocation strategy
 - **Context:** The heavy worker must run OpenGrep against the materialized source with a configurable rule set.
-- **Decision:** Invoke an `opengrep` binary with `--config`, `--sarif`, and `--output` flags; fall back to emitting a stub SARIF when the binary/config is not set.
+- **Decision:** Invoke an `opengrep` binary with `--config`, `--sarif`, and `--output` flags; fail closed when the binary/config is not set or no SARIF is produced.
 - **Options considered:** (1) Direct binary invocation, (2) Run OpenGrep via container runtime, (3) Use Semgrep with compatibility flags.
-- **Rationale:** Direct invocation keeps the worker simple for now while allowing config-driven rule selection; stub SARIF keeps the workflow moving in dev.
+- **Rationale:** Direct invocation keeps the worker simple for now while allowing config-driven rule selection; failing closed avoids silently treating an unscanned repository as clean.
 - **Consequences:** Requires `opengrep.bin` and `opengrep.config` to be configured in real deployments; containerization is still needed for production isolation.
 - **Date:** 2026-01-25
 
@@ -138,7 +138,7 @@
 
 ## ADR-0019: Triage service with CEL policy and JWT-secured review
 - **Context:** Low-confidence false positives must be persisted for human triage, classified consistently, and pushed back to repos as signed suppressions.
-- **Decision:** Add a `triage-service` (Quarkus + Postgres) that evaluates a repo-managed CEL policy from the default branch using only `cweId` and `confidencePercent`. Persist only "Potential False Positive" findings for review. Secure triage APIs with JWT role claim `secuirty:vuln_assessor:triager` and create suppression PRs via Git-over-HTTPS.
+- **Decision:** Add a `triage-service` (Quarkus + Postgres) that evaluates a repo-managed CEL policy from the default branch using only `cweId` and `confidencePercent`. Persist only "Potential False Positive" findings for review. Secure triage APIs with JWT role claim `security:vuln_assessor:triager` and create suppression PRs via Git-over-HTTPS.
 - **Options considered:** (1) Hardcoded thresholds in the filter worker, (2) Central policy engine (OPA) with remote policy storage, (3) Repo-managed CEL policy with local evaluation.
 - **Rationale:** CEL keeps policy lightweight and repo-owned while enabling consistent classification; the triage service centralizes persistence, audit, and PR automation without expanding the workflow engine.
 - **Consequences:** The triage service requires Postgres and JWT configuration; policy changes land via default-branch updates; PR URL generation may need template config for each SCM.

@@ -59,7 +59,6 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
                 ActivityOptions.newBuilder()
                         .setTaskQueue("scan-opengrep")
                         .setStartToCloseTimeout(Duration.ofMinutes(30))
-                        .setHeartbeatTimeout(Duration.ofSeconds(30))
                         .setRetryOptions(RetryOptions.newBuilder()
                                 .setInitialInterval(Duration.ofSeconds(10))
                                 .setMaximumInterval(Duration.ofMinutes(5))
