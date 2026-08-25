@@ -16,7 +16,7 @@
 
     <properties>
         <quarkus.version>${quarkus.platform.version}</quarkus.version>
-        <jgit.version>6.8.0.202311291450-r</jgit.version>
+        <jgit.version>6.10.1.202505221210-r</jgit.version>
         <cel.version>0.8.0</cel.version>
         <protobuf.version>4.28.2</protobuf.version>
     </properties>
