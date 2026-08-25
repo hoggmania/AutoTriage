@@ -137,6 +137,7 @@ Triage:
 ## Related Docs
 
 - `docs/architecture.md`
+- `docs/autotriage-vs-agentic-security-tools.md`
 - `docs/runbook.md`
 - `docs/triage-plan.md`
 - `docs/decisions/decision-log.md`
