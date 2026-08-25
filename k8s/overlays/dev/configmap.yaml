@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: autotriage-config}
+data:
+  TEMPORAL_TARGET: "temporal.autotriage-dev.svc.cluster.local:7233"
+  MP_JWT_VERIFY_ISSUER: "https://autotriage.dev"

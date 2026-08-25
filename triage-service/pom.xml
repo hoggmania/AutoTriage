@@ -29,12 +29,7 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive</artifactId>
-            <version>${quarkus.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive-jackson</artifactId>
+            <artifactId>quarkus-rest-jackson</artifactId>
             <version>${quarkus.version}</version>
         </dependency>
         <dependency>
@@ -75,6 +70,11 @@
         <dependency>
             <groupId>com.autotriage</groupId>
             <artifactId>scan-common</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.autotriage</groupId>
+            <artifactId>scan-identity-kms</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
         <dependency>

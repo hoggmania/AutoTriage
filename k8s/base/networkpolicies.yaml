@@ -1,0 +1,129 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: scan-api}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: scan-api}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - ports: [{protocol: TCP, port: 7233}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: triage-service}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: triage-service}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: scan-worker-filter}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}
+      ports: [{protocol: TCP, port: 8095}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}}]
+      ports: [{protocol: TCP, port: 5432}]
+    - ports: [{protocol: TCP, port: 443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: workflow-worker}
+spec:
+  podSelector: {matchLabels: {autotriage.io/worker-class: workflow}}
+  policyTypes: [Egress]
+  egress:
+    - ports: [{protocol: TCP, port: 7233}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: light-worker}
+spec:
+  podSelector: {matchLabels: {autotriage.io/worker-class: light}}
+  policyTypes: [Egress]
+  egress:
+    - ports: [{protocol: TCP, port: 7233}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: minio}}}]
+      ports: [{protocol: TCP, port: 9000}]
+    - ports: [{protocol: TCP, port: 443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: filter-worker}
+spec:
+  podSelector: {matchLabels: {autotriage.io/worker-class: filter}}
+  policyTypes: [Egress]
+  egress:
+    - ports: [{protocol: TCP, port: 7233}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: minio}}}]
+      ports: [{protocol: TCP, port: 9000}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: triage-service}}}]
+      ports: [{protocol: TCP, port: 8095}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: opengrep-worker}
+spec:
+  podSelector: {matchLabels: {autotriage.io/worker-class: opengrep}}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - ports: [{protocol: TCP, port: 7233}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: minio}}}]
+      ports: [{protocol: TCP, port: 9000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: postgres}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: triage-service}}}]
+      ports: [{protocol: TCP, port: 5432}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: minio}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: minio}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: autotriage.io/worker-class, operator: In, values: [light, filter, opengrep]}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: minio-bucket-init}}
+      ports: [{protocol: TCP, port: 9000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: minio-bucket-init}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: minio-bucket-init}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: minio}}}]
+      ports: [{protocol: TCP, port: 9000}]

@@ -9,8 +9,12 @@ import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.SuppressionBundle;
 import com.autotriage.common.model.SuppressionSource;
 import com.autotriage.common.workflow.OpenGrepPRScanWorkflow;
+import io.temporal.activity.ActivityCancellationType;
 import io.temporal.activity.ActivityOptions;
+import io.temporal.failure.ActivityFailure;
 import io.temporal.common.RetryOptions;
+import io.temporal.failure.CanceledFailure;
+import io.temporal.workflow.CancellationScope;
 import io.temporal.workflow.Workflow;
 
 import java.time.Duration;
@@ -19,6 +23,7 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
 
     private ScanStatus status = new ScanStatus("unknown", ScanState.RUNNING, "Not started");
     private boolean cancelRequested;
+    private CancellationScope openGrepCancellationScope;
 
     @Override
     public void startScan(ScanRequest request) {
@@ -59,6 +64,8 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
                 ActivityOptions.newBuilder()
                         .setTaskQueue("scan-opengrep")
                         .setStartToCloseTimeout(Duration.ofMinutes(30))
+                        .setHeartbeatTimeout(Duration.ofSeconds(30))
+                        .setCancellationType(ActivityCancellationType.WAIT_CANCELLATION_COMPLETED)
                         .setRetryOptions(RetryOptions.newBuilder()
                                 .setInitialInterval(Duration.ofSeconds(10))
                                 .setMaximumInterval(Duration.ofMinutes(5))
@@ -99,7 +106,11 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
             }
 
             updateStatus(request.getRunId(), ScanState.RUNNING, "Running OpenGrep");
-            ArtifactRef rawSarif = openGrepActivities.runOpenGrep(source, request.getRunId());
+            ArtifactRef[] rawSarifResult = new ArtifactRef[1];
+            openGrepCancellationScope = Workflow.newCancellationScope(
+                    () -> rawSarifResult[0] = openGrepActivities.runOpenGrep(source, request.getRunId()));
+            openGrepCancellationScope.run();
+            ArtifactRef rawSarif = rawSarifResult[0];
             if (cancelRequested) {
                 updateStatus(request.getRunId(), ScanState.CANCELED, "Canceled after OpenGrep run");
                 return;
@@ -114,6 +125,16 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
             updateStatus(request.getRunId(), ScanState.RUNNING, "Computing verdict");
             ScanStatus verdict = lightActivities.computeVerdict(request.getRunId(), suppressionResult.getFinalSarif());
             updateStatus(request.getRunId(), verdict.getState(), verdict.getMessage());
+        } catch (CanceledFailure canceled) {
+            updateStatus(request.getRunId(), ScanState.CANCELED, "OpenGrep canceled");
+        } catch (ActivityFailure activityFailure) {
+            if (cancelRequested || activityFailure.getCause() instanceof CanceledFailure) {
+                updateStatus(request.getRunId(), ScanState.CANCELED, "OpenGrep canceled");
+            } else {
+                Workflow.getLogger(OpenGrepPRScanWorkflowImpl.class)
+                        .error("Workflow activity failed for runId=" + request.getRunId(), activityFailure);
+                updateStatus(request.getRunId(), ScanState.FAILED, "Workflow failed: ActivityFailure");
+            }
         } catch (Exception e) {
             Workflow.getLogger(OpenGrepPRScanWorkflowImpl.class)
                     .error("Workflow failed for runId=" + request.getRunId(), e);
@@ -130,6 +151,9 @@ public class OpenGrepPRScanWorkflowImpl implements OpenGrepPRScanWorkflow {
     public void cancelScan(String runId) {
         cancelRequested = true;
         updateStatus(runId, ScanState.CANCELED, "Cancel requested");
+        if (openGrepCancellationScope != null) {
+            openGrepCancellationScope.cancel("Scan canceled by signal");
+        }
     }
 
     private void updateStatus(String runId, ScanState state, String message) {

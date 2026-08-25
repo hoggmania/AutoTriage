@@ -1,5 +1,10 @@
 package com.autotriage.triage.service;
 
+import com.autotriage.common.evidence.EvidenceCalibration;
+import com.autotriage.common.evidence.EvidenceLevel;
+import com.autotriage.common.evidence.EvidenceProvenance;
+import com.autotriage.common.evidence.TriageEvidence;
+import com.autotriage.common.evidence.ZeroFalseSignals;
 import com.autotriage.common.model.TriageCandidateRequest;
 import com.autotriage.common.model.TriageCandidateResponse;
 import com.autotriage.common.model.TriageClassification;
@@ -13,11 +18,10 @@ import io.quarkus.test.junit.mockito.InjectMock;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledForJreRange;
-import org.junit.jupiter.api.condition.JRE;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -27,7 +31,6 @@ import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.when;
 
 @QuarkusTest
-@EnabledForJreRange(max = JRE.JAVA_21)
 class TriageApprovalFlowTest {
 
     @Inject
@@ -44,12 +47,12 @@ class TriageApprovalFlowTest {
 
     @BeforeEach
     void setUp() {
-        when(policyLoader.loadPolicy(anyString())).thenReturn("confidencePercent <= 30 ? \"TRUE_POSITIVE\" : "
-                + "confidencePercent <= 60 ? \"POTENTIAL_FALSE_POSITIVE\" : "
-                + "\"FALSE_POSITIVE\"");
+        when(policyLoader.loadPolicy(anyString())).thenReturn(
+                "evidence.level == 'MODERATE' ? 'POTENTIAL_FALSE_POSITIVE' : 'TRUE_POSITIVE'");
         when(suppressionUpdateService.createSuppressionPr(any()))
                 .thenReturn(Optional.of(new SuppressionUpdateService.SuppressionPrResult(
                         "triage/auto-1",
+                        1,
                         "https://example.com/pr/1")));
     }
 
@@ -68,7 +71,13 @@ class TriageApprovalFlowTest {
                 "src/App.java",
                 42,
                 55,
-                "Potential XSS finding");
+                "Potential XSS finding",
+                new TriageEvidence(EvidenceLevel.MODERATE,
+                        new EvidenceCalibration("zerofalse-signals", "1", "conservative-v1",
+                                EvidenceLevel.MODERATE, 0.55),
+                        new EvidenceProvenance("zerofalse", "1", "openai", "gpt-4o", "v1", "optimized",
+                                "a".repeat(64), "b".repeat(64), "c".repeat(64), Instant.now()),
+                        new ZeroFalseSignals(true, "Yes", "No", "medium")));
 
         TriageCandidateResponse response = candidateService.ingest(request);
         assertEquals(TriageClassification.POTENTIAL_FALSE_POSITIVE, response.getClassification());

@@ -3,8 +3,6 @@ package com.autotriage.triage.api;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.jwt.build.Jwt;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledForJreRange;
-import org.junit.jupiter.api.condition.JRE;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -17,7 +15,6 @@ import java.util.Set;
 import static io.restassured.RestAssured.given;
 
 @QuarkusTest
-@EnabledForJreRange(max = JRE.JAVA_21)
 class TriageAuthTest {
 
     private static final String ISSUER = "https://autotriage.test";

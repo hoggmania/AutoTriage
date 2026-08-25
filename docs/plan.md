@@ -9,7 +9,7 @@ For the triage workflow, see `docs/triage-plan.md`.
 ## Status (2026-01-25)
 - Core scan pipeline (API, workflow, light/filter/opengrep workers, suppression mock) is implemented end-to-end.
 - Triage service is implemented with CEL policy evaluation, JWT-secured review API, UI, and Git-over-HTTPS PR automation.
-- Java target is 25; Quarkus integration tests run only on Java 21 due to Byte Buddy/ASM limits.
+- Java 17 is the compiler, test, CI, and container runtime baseline; Maven 3.9 or newer is required, and Quarkus integration tests run in the normal reactor.
 - Kubernetes manifests cover scan services; triage service and database manifests are not yet included.
 
 ---

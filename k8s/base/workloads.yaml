@@ -1,0 +1,220 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scan-api
+  labels: {app.kubernetes.io/name: scan-api}
+spec:
+  selector: {app.kubernetes.io/name: scan-api}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-api
+  labels: {app.kubernetes.io/name: scan-api, app.kubernetes.io/component: api}
+spec:
+  replicas: 2
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector: {matchLabels: {app.kubernetes.io/name: scan-api}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: scan-api, app.kubernetes.io/component: api}
+    spec:
+      serviceAccountName: scan-api
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: scan-api
+          image: autotriage/scan-api:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 8080}]
+          envFrom: [{configMapRef: {name: autotriage-config}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          startupProbe: {tcpSocket: {port: http}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {tcpSocket: {port: http}, periodSeconds: 10, timeoutSeconds: 2}
+          livenessProbe: {tcpSocket: {port: http}, periodSeconds: 20, timeoutSeconds: 2, failureThreshold: 3}
+          volumeMounts: [{name: tmp, mountPath: /tmp}, {name: temporal-tls, mountPath: /etc/temporal-tls, readOnly: true}]
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+        - name: temporal-tls
+          secret: {secretName: temporal-tls, optional: true, defaultMode: 256}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triage-service
+  labels: {app.kubernetes.io/name: triage-service}
+spec:
+  selector: {app.kubernetes.io/name: triage-service}
+  ports: [{name: http, port: 8095, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage-service
+  labels: {app.kubernetes.io/name: triage-service, app.kubernetes.io/component: triage}
+spec:
+  replicas: 2
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector: {matchLabels: {app.kubernetes.io/name: triage-service}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: triage-service, app.kubernetes.io/component: triage}
+    spec:
+      serviceAccountName: triage-service
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16.4
+          command: ["sh", "-ec", "until pg_isready -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\"; do sleep 2; done"]
+          envFrom: [{configMapRef: {name: autotriage-config}}, {secretRef: {name: autotriage-runtime}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
+      containers:
+        - name: triage-service
+          image: autotriage/triage-service:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 8095}]
+          envFrom: [{configMapRef: {name: autotriage-config}}, {secretRef: {name: autotriage-runtime}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 150m, memory: 384Mi}, limits: {cpu: "1", memory: 768Mi}}
+          startupProbe: {tcpSocket: {port: http}, failureThreshold: 36, periodSeconds: 5}
+          readinessProbe: {tcpSocket: {port: http}, periodSeconds: 10, timeoutSeconds: 2}
+          livenessProbe: {tcpSocket: {port: http}, periodSeconds: 20, timeoutSeconds: 2, failureThreshold: 3}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 256Mi}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-workflow
+  labels: {app.kubernetes.io/name: scan-worker-workflow, app.kubernetes.io/component: worker}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app.kubernetes.io/name: scan-worker-workflow}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: scan-worker-workflow, app.kubernetes.io/component: worker, autotriage.io/worker-class: workflow}
+    spec:
+      serviceAccountName: scan-worker-workflow
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: scan-worker-workflow
+          image: autotriage/scan-worker-workflow:latest
+          envFrom: [{configMapRef: {name: autotriage-config}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          startupProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 10, timeoutSeconds: 2}
+          livenessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 20, timeoutSeconds: 2, failureThreshold: 3}
+          volumeMounts: [{name: tmp, mountPath: /tmp}, {name: temporal-tls, mountPath: /etc/temporal-tls, readOnly: true}]
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+        - name: temporal-tls
+          secret: {secretName: temporal-tls, optional: true, defaultMode: 256}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-light
+  labels: {app.kubernetes.io/name: scan-worker-light, app.kubernetes.io/component: worker}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app.kubernetes.io/name: scan-worker-light}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: scan-worker-light, app.kubernetes.io/component: worker, autotriage.io/worker-class: light}
+    spec:
+      serviceAccountName: scan-worker-light
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: scan-worker-light
+          image: autotriage/scan-worker-light:latest
+          envFrom: [{configMapRef: {name: autotriage-config}}, {secretRef: {name: autotriage-runtime}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 750m, memory: 768Mi}}
+          startupProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 10, timeoutSeconds: 2}
+          livenessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 20, timeoutSeconds: 2, failureThreshold: 3}
+          volumeMounts: [{name: tmp, mountPath: /tmp}, {name: temporal-tls, mountPath: /etc/temporal-tls, readOnly: true}]
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+        - name: temporal-tls
+          secret: {secretName: temporal-tls, optional: true, defaultMode: 256}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-filter
+  labels: {app.kubernetes.io/name: scan-worker-filter, app.kubernetes.io/component: worker}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app.kubernetes.io/name: scan-worker-filter}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: scan-worker-filter, app.kubernetes.io/component: worker, autotriage.io/worker-class: filter}
+    spec:
+      serviceAccountName: scan-worker-filter
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: scan-worker-filter
+          image: autotriage/scan-worker-filter:latest
+          envFrom: [{configMapRef: {name: autotriage-config}}, {secretRef: {name: autotriage-runtime}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 750m, memory: 768Mi}}
+          startupProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 10, timeoutSeconds: 2}
+          livenessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 20, timeoutSeconds: 2, failureThreshold: 3}
+          volumeMounts: [{name: tmp, mountPath: /tmp}, {name: temporal-tls, mountPath: /etc/temporal-tls, readOnly: true}]
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+        - name: temporal-tls
+          secret: {secretName: temporal-tls, optional: true, defaultMode: 256}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scan-worker-opengrep
+  labels: {app.kubernetes.io/name: scan-worker-opengrep, app.kubernetes.io/component: worker}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app.kubernetes.io/name: scan-worker-opengrep}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: scan-worker-opengrep, app.kubernetes.io/component: worker, autotriage.io/worker-class: opengrep}
+    spec:
+      serviceAccountName: scan-worker-opengrep
+      automountServiceAccountToken: false
+      runtimeClassName: autotriage-sandbox
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector: {matchLabels: {app.kubernetes.io/name: scan-worker-opengrep}}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: scan-worker-opengrep
+          image: autotriage/scan-worker-opengrep:latest
+          envFrom: [{configMapRef: {name: autotriage-config}}, {secretRef: {name: autotriage-runtime}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources: {requests: {cpu: 500m, memory: 1Gi, ephemeral-storage: 1Gi}, limits: {cpu: "2", memory: 3Gi, ephemeral-storage: 4Gi}}
+          startupProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 10, timeoutSeconds: 2}
+          livenessProbe: {exec: {command: ["sh", "-c", "kill -0 1"]}, periodSeconds: 20, timeoutSeconds: 2, failureThreshold: 3}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: workspace, mountPath: /workspace}
+            - {name: temporal-tls, mountPath: /etc/temporal-tls, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi}}
+        - {name: workspace, emptyDir: {sizeLimit: 4Gi}}
+        - name: temporal-tls
+          secret: {secretName: temporal-tls, optional: true, defaultMode: 256}

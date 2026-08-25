@@ -1,6 +1,9 @@
 package com.autotriage.worker.filter.activity;
 
 import com.autotriage.common.activity.ScanActivities;
+import com.autotriage.common.artifact.ArtifactContent;
+import com.autotriage.common.artifact.ArtifactStore;
+import com.autotriage.artifact.s3.S3ArtifactStore;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanStatus;
@@ -9,6 +12,11 @@ import com.autotriage.common.model.SuppressionBundle;
 import com.autotriage.common.model.TriageCandidateRequest;
 import com.autotriage.common.model.TriageCandidateResponse;
 import com.autotriage.common.model.TriageClassification;
+import com.autotriage.common.evidence.EvidenceCalibration;
+import com.autotriage.common.evidence.EvidenceLevel;
+import com.autotriage.common.evidence.EvidenceProvenance;
+import com.autotriage.common.evidence.TriageEvidence;
+import com.autotriage.common.evidence.ZeroFalseSignals;
 import com.autotriage.worker.filter.model.SuppressionReport;
 import com.autotriage.worker.filter.triage.TriageClient;
 import com.autotriage.worker.filter.zerofalse.ZeroFalseContext;
@@ -42,6 +50,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -58,9 +68,15 @@ public class FilterScanActivities implements ScanActivities {
     private final ZeroFalseContextBuilder contextBuilder;
     private final ZeroFalseEvaluator zeroFalseEvaluator;
     private final TriageClient triageClient;
+    private final ArtifactStore artifactStore;
 
     public FilterScanActivities() {
-        this(new ZeroFalsePromptLibrary(), new ZeroFalseContextBuilder(), new ZeroFalseEvaluatorDisabled(), new TriageClient());
+        this(new ZeroFalsePromptLibrary(), new ZeroFalseContextBuilder(), new ZeroFalseEvaluatorDisabled(), new TriageClient(),
+                S3ArtifactStore.fromEnvironment());
+    }
+
+    public FilterScanActivities(ArtifactStore artifactStore) {
+        this(new ZeroFalsePromptLibrary(), new ZeroFalseContextBuilder(), new ZeroFalseEvaluatorDisabled(), new TriageClient(), artifactStore);
     }
 
     @Inject
@@ -68,10 +84,19 @@ public class FilterScanActivities implements ScanActivities {
                                 ZeroFalseContextBuilder contextBuilder,
                                 ZeroFalseEvaluator zeroFalseEvaluator,
                                 TriageClient triageClient) {
+        this(promptLibrary, contextBuilder, zeroFalseEvaluator, triageClient, S3ArtifactStore.fromEnvironment());
+    }
+
+    public FilterScanActivities(ZeroFalsePromptLibrary promptLibrary,
+                                ZeroFalseContextBuilder contextBuilder,
+                                ZeroFalseEvaluator zeroFalseEvaluator,
+                                TriageClient triageClient,
+                                ArtifactStore artifactStore) {
         this.promptLibrary = promptLibrary;
         this.contextBuilder = contextBuilder;
         this.zeroFalseEvaluator = zeroFalseEvaluator;
         this.triageClient = triageClient;
+        this.artifactStore = java.util.Objects.requireNonNull(artifactStore, "artifactStore");
     }
 
     @Override
@@ -102,8 +127,10 @@ public class FilterScanActivities implements ScanActivities {
         String sourceUri = sourceArchive == null ? "null" : sourceArchive.getUri();
         log.infov("applySuppressions rawUri={0} suppressionUri={1} sourceUri={2}", rawSarif.getUri(), suppressionBundle.getUri(), sourceUri);
         Path sourceRoot = null;
+        Path ioDir = null;
         try {
-            Path rawPath = resolveFilePath(rawSarif.getUri());
+            ioDir = Files.createTempDirectory("autotriage-filter-io-");
+            Path rawPath = artifactStore.materialize(rawSarif, ioDir, "raw.sarif");
             JsonNode sarif = mapper.readTree(Files.readString(rawPath, StandardCharsets.UTF_8));
             JsonNode runNode = sarif.at("/runs/0");
             JsonNode resultsNode = sarif.at("/runs/0/results");
@@ -145,7 +172,8 @@ public class FilterScanActivities implements ScanActivities {
                 if (sourceRoot == null) {
                     log.warn("ZeroFalse enabled but source archive unavailable; skipping LLM suppressions");
                 } else {
-                    ZeroFalseResult zeroFalseResult = applyZeroFalseFiltering(filtered, runNode, sourceRoot, settings, request);
+                    ZeroFalseResult zeroFalseResult = applyZeroFalseFiltering(filtered, runNode, sourceRoot, settings,
+                            request, sourceArchive, rawSarif);
                     filtered = zeroFalseResult.filtered();
                     llmSuppressed = zeroFalseResult.suppressed();
                 }
@@ -155,22 +183,23 @@ public class FilterScanActivities implements ScanActivities {
                 ((ObjectNode) runNode).set("results", filtered);
             }
 
-            Path artifactsDir = resolveArtifactsDir();
-            Files.createDirectories(artifactsDir);
-            Path finalSarifPath = artifactsDir.resolve("final-" + rawPath.getFileName().toString());
+            Path finalSarifPath = ioDir.resolve("final.sarif");
             Files.writeString(finalSarifPath, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(sarif), StandardCharsets.UTF_8);
             SuppressionReport report = new SuppressionReport(suppressed, expired, invalid, llmSuppressed);
-            Path reportPath = artifactsDir.resolve("suppression-report-" + rawPath.getFileName().toString().replace(".sarif", ".json"));
+            Path reportPath = ioDir.resolve("suppression-report.json");
             Files.writeString(reportPath, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report), StandardCharsets.UTF_8);
             return new SuppressionApplicationResult(
-                    new ArtifactRef(finalSarifPath.toUri().toString(), "sarif-final"),
-                    new ArtifactRef(reportPath.toUri().toString(), "suppression-report"));
+                    artifactStore.put(new ArtifactContent(Files.readAllBytes(finalSarifPath), "sarif-final",
+                            "application/sarif+json", request.getRunId(), "filter")),
+                    artifactStore.put(new ArtifactContent(Files.readAllBytes(reportPath), "suppression-report",
+                            "application/json", request.getRunId(), "filter")));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to apply suppressions", e);
         } finally {
             if (sourceRoot != null) {
                 deleteRecursively(sourceRoot);
             }
+            if (ioDir != null) deleteRecursively(ioDir);
         }
     }
 
@@ -184,30 +213,17 @@ public class FilterScanActivities implements ScanActivities {
         throw new UnsupportedOperationException("computeVerdict is handled by light worker");
     }
 
-    private Path resolveFilePath(String uri) {
-        URI sourceUri = URI.create(uri);
-        if (!"file".equalsIgnoreCase(sourceUri.getScheme())) {
-            throw new IllegalArgumentException("Only file:// SARIF is supported in this phase");
-        }
-        return Path.of(sourceUri);
-    }
-
-    private Path resolveArtifactsDir() {
-        String dir = ConfigProvider.getConfig()
-                .getOptionalValue("artifacts.dir", String.class)
-                .orElse("artifacts");
-        return Path.of(dir);
-    }
 
     private Map<String, JsonNode> loadSuppressions(ArtifactRef suppressionBundle) throws IOException {
         Map<String, JsonNode> suppressions = new HashMap<>();
         if (suppressionBundle.getUri().startsWith("none://")) {
             return suppressions;
         }
-        Path bundlePath = resolveFilePath(suppressionBundle.getUri());
         Path tempDir = Files.createTempDirectory("autotriage-suppressions-filter-");
         try {
+            Path bundlePath = artifactStore.materialize(suppressionBundle, tempDir, "suppressions.tar.gz");
             extractTarGz(bundlePath, tempDir);
+            Files.delete(bundlePath);
             Files.walk(tempDir)
                     .filter(path -> path.toString().endsWith(".yml") || path.toString().endsWith(".yaml"))
                     .forEach(path -> {
@@ -271,7 +287,9 @@ public class FilterScanActivities implements ScanActivities {
                                                     JsonNode runNode,
                                                     Path sourceRoot,
                                                     ZeroFalseSettings settings,
-                                                    ScanRequest request) {
+                                                    ScanRequest request,
+                                                    ArtifactRef sourceArchive,
+                                                    ArtifactRef rawSarif) {
         ArrayNode filtered = mapper.createArrayNode();
         int suppressed = 0;
         int evaluated = 0;
@@ -295,11 +313,12 @@ public class FilterScanActivities implements ScanActivities {
                 continue;
             }
             ZeroFalseVerdict zeroFalseVerdict = verdict.get();
-            TriageCandidateRequest candidate = buildTriageCandidate(request, result, cweId, zeroFalseVerdict);
+            TriageCandidateRequest candidate = buildTriageCandidate(request, result, cweId, zeroFalseVerdict,
+                    prompt, sourceArchive, rawSarif);
             Optional<TriageCandidateResponse> triageResponse = triageClient.submitCandidate(candidate);
             TriageClassification classification = triageResponse
                     .map(TriageCandidateResponse::getClassification)
-                    .orElseGet(() -> classifyByThreshold(zeroFalseVerdict.confidencePercent()));
+                    .orElseGet(() -> classifyByEvidence(candidate.getEvidence()));
             if (classification == TriageClassification.FALSE_POSITIVE) {
                 suppressed++;
             } else {
@@ -313,7 +332,10 @@ public class FilterScanActivities implements ScanActivities {
     private TriageCandidateRequest buildTriageCandidate(ScanRequest request,
                                                         JsonNode result,
                                                         String cweId,
-                                                        ZeroFalseVerdict verdict) {
+                                                        ZeroFalseVerdict verdict,
+                                                        String prompt,
+                                                        ArtifactRef sourceArchive,
+                                                        ArtifactRef rawSarif) {
         String repository = request == null ? null : request.getRepository();
         String commitSha = request == null ? null : request.getCommitSha();
         String runId = request == null ? null : request.getRunId();
@@ -324,6 +346,7 @@ public class FilterScanActivities implements ScanActivities {
                 ? result.at("/locations/0/physicalLocation/region/startLine").asInt()
                 : null;
         String message = result.path("message").path("text").asText(null);
+        TriageEvidence evidence = buildEvidence(verdict, prompt, sourceArchive, rawSarif);
         return new TriageCandidateRequest(
                 repository,
                 commitSha,
@@ -334,21 +357,58 @@ public class FilterScanActivities implements ScanActivities {
                 filePath,
                 startLine,
                 verdict.confidencePercent(),
-                message);
+                message,
+                evidence);
     }
 
-    private TriageClassification classifyByThreshold(Integer confidencePercent) {
-        if (confidencePercent == null) {
-            return TriageClassification.TRUE_POSITIVE;
+    private TriageEvidence buildEvidence(ZeroFalseVerdict verdict, String prompt,
+                                         ArtifactRef sourceArchive, ArtifactRef rawSarif) {
+        boolean sanitization = "yes".equalsIgnoreCase(verdict.sanitizationFound());
+        boolean infeasible = "no".equalsIgnoreCase(verdict.attackFeasible());
+        int corroboratingSignals = (verdict.falsePositive() ? 1 : 0) + (sanitization ? 1 : 0) + (infeasible ? 1 : 0);
+        EvidenceLevel level = switch (corroboratingSignals) {
+            case 3 -> EvidenceLevel.STRONG;
+            case 2 -> EvidenceLevel.MODERATE;
+            case 1 -> EvidenceLevel.LIMITED;
+            default -> EvidenceLevel.INSUFFICIENT;
+        };
+        double rawScore = verdict.confidencePercent() == null ? 0.0 : verdict.confidencePercent() / 100.0;
+        var config = ConfigProvider.getConfig();
+        EvidenceCalibration calibration = new EvidenceCalibration("zerofalse-signals", "1",
+                config.getOptionalValue("zerofalse.calibration.profile", String.class).orElse("conservative-v1"),
+                level, rawScore);
+        EvidenceProvenance provenance = new EvidenceProvenance(
+                "zerofalse",
+                config.getOptionalValue("zerofalse.engine.version", String.class).orElse("1"),
+                config.getOptionalValue("quarkus.langchain4j.openai.base-url", String.class).isPresent()
+                        ? "openai-compatible" : "configured-provider",
+                config.getOptionalValue("quarkus.langchain4j.openai.chat-model.model-name", String.class)
+                        .orElse("configured-model"),
+                config.getOptionalValue("zerofalse.model.version", String.class).orElse("unspecified"),
+                config.getOptionalValue("zerofalse.prompts.variant", String.class).orElse("optimized"),
+                sha256(prompt.getBytes(StandardCharsets.UTF_8)),
+                sourceArchive.getSha256(),
+                rawSarif.getSha256(),
+                Instant.now());
+        return new TriageEvidence(level, calibration, provenance,
+                new ZeroFalseSignals(verdict.falsePositive(), verdict.sanitizationFound(),
+                        verdict.attackFeasible(), verdict.confidence()));
+    }
+
+    private static String sha256(byte[] value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+        } catch (Exception impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
         }
-        int value = confidencePercent;
-        if (value <= 30) {
-            return TriageClassification.TRUE_POSITIVE;
-        }
-        if (value <= 60) {
-            return TriageClassification.POTENTIAL_FALSE_POSITIVE;
-        }
-        return TriageClassification.FALSE_POSITIVE;
+    }
+
+    private TriageClassification classifyByEvidence(TriageEvidence evidence) {
+        return switch (evidence.getCalibratedLevel()) {
+            case STRONG -> TriageClassification.FALSE_POSITIVE;
+            case MODERATE -> TriageClassification.POTENTIAL_FALSE_POSITIVE;
+            case LIMITED, INSUFFICIENT -> TriageClassification.TRUE_POSITIVE;
+        };
     }
 
     private Path extractSourceArchive(ArtifactRef sourceArchive) {
@@ -356,9 +416,10 @@ public class FilterScanActivities implements ScanActivities {
             return null;
         }
         try {
-            Path archivePath = resolveFilePath(sourceArchive.getUri());
             Path tempDir = Files.createTempDirectory("autotriage-source-context-");
+            Path archivePath = artifactStore.materialize(sourceArchive, tempDir, "source.tar.gz");
             extractTarGz(archivePath, tempDir);
+            Files.delete(archivePath);
             return tempDir;
         } catch (Exception e) {
             log.warnv("Failed to extract source archive for ZeroFalse: {0}", e.getMessage());

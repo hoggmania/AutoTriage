@@ -1,7 +1,9 @@
 package com.autotriage.worker.filter.activity;
 
+import com.autotriage.common.artifact.ArtifactContent;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.SuppressionApplicationResult;
+import com.autotriage.test.TestArtifactStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -16,7 +18,7 @@ import org.junit.jupiter.api.Test;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.URI;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +33,7 @@ class FilterScanActivitiesTest {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static Path tempRoot;
     private static Path artifactsDir;
+    private static final TestArtifactStore artifactStore = new TestArtifactStore();
 
     @BeforeAll
     static void setupArtifactsDir() throws IOException {
@@ -67,22 +70,21 @@ class FilterScanActivitiesTest {
         Path suppressionBundle = tempRoot.resolve("suppressions.tar.gz");
         writeSuppressionBundle(suppressionBundle, suppressions);
 
-        FilterScanActivities activities = new FilterScanActivities();
+        FilterScanActivities activities = new FilterScanActivities(artifactStore);
         SuppressionApplicationResult result = activities.applySuppressions(
-                new ArtifactRef(rawSarif.toUri().toString(), "sarif-raw"),
-                new ArtifactRef(suppressionBundle.toUri().toString(), "suppression-bundle"),
+                artifactStore.putBytes(Files.readAllBytes(rawSarif), "sarif-raw", "application/sarif+json"),
+                artifactStore.putBytes(Files.readAllBytes(suppressionBundle), "suppression-bundle", "application/gzip"),
                 new ArtifactRef("none://source", "source-archive"),
                 createRequest("test-run", "https://example.com/repo.git", "abc123"));
 
-        Path finalSarifPath = Path.of(URI.create(result.getFinalSarif().getUri()));
-        JsonNode finalSarif = mapper.readTree(Files.readString(finalSarifPath, StandardCharsets.UTF_8));
+        ArtifactContent finalContent = artifactStore.get(result.getFinalSarif());
+        JsonNode finalSarif = mapper.readTree(finalContent.bytes());
         JsonNode finalResults = finalSarif.at("/runs/0/results");
         assertEquals(2, finalResults.size());
         assertTrue(containsFingerprint(finalResults, "fp-invalid"));
         assertTrue(containsFingerprint(finalResults, "fp-none"));
 
-        Path reportPath = Path.of(URI.create(result.getSuppressionReport().getUri()));
-        JsonNode report = mapper.readTree(Files.readString(reportPath, StandardCharsets.UTF_8));
+        JsonNode report = mapper.readTree(artifactStore.get(result.getSuppressionReport()).bytes());
         assertEquals(2, report.path("suppressedCount").asInt());
         assertEquals(1, report.path("expiredCount").asInt());
         assertEquals(1, report.path("invalidCount").asInt());
@@ -97,22 +99,20 @@ class FilterScanActivitiesTest {
         results.add(createResult("RULE-B", "fp-2", 20));
         writeSarif(rawSarif, results);
 
-        FilterScanActivities activities = new FilterScanActivities();
+        FilterScanActivities activities = new FilterScanActivities(artifactStore);
         SuppressionApplicationResult result = activities.applySuppressions(
-                new ArtifactRef(rawSarif.toUri().toString(), "sarif-raw"),
+                artifactStore.putBytes(Files.readAllBytes(rawSarif), "sarif-raw", "application/sarif+json"),
                 new ArtifactRef("none://suppressions", "suppression-bundle"),
                 new ArtifactRef("none://source", "source-archive"),
                 createRequest("test-run", "https://example.com/repo.git", "abc123"));
 
-        Path finalSarifPath = Path.of(URI.create(result.getFinalSarif().getUri()));
-        JsonNode finalSarif = mapper.readTree(Files.readString(finalSarifPath, StandardCharsets.UTF_8));
+        JsonNode finalSarif = mapper.readTree(artifactStore.get(result.getFinalSarif()).bytes());
         JsonNode finalResults = finalSarif.at("/runs/0/results");
         assertEquals(2, finalResults.size());
         assertTrue(containsFingerprint(finalResults, "fp-1"));
         assertTrue(containsFingerprint(finalResults, "fp-2"));
 
-        Path reportPath = Path.of(URI.create(result.getSuppressionReport().getUri()));
-        JsonNode report = mapper.readTree(Files.readString(reportPath, StandardCharsets.UTF_8));
+        JsonNode report = mapper.readTree(artifactStore.get(result.getSuppressionReport()).bytes());
         assertEquals(0, report.path("suppressedCount").asInt());
         assertEquals(0, report.path("expiredCount").asInt());
         assertEquals(0, report.path("invalidCount").asInt());

@@ -1,7 +1,7 @@
 # Runbook
 
 ## Local Run
-1. Install JDK 25 (the repo targets Java 25) and Maven.
+1. Install JDK 17 and Maven 3.9 or newer. The build enforces this toolchain; run `mvn -B verify` from the repository root before building images.
 2. Populate environment variables for Temporal (e.g., `TEMPORAL_TARGET`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TLS_ENABLED=false`).
 3. From the repo root, run `mvn -pl scan-api quarkus:dev` to boot the REST service.
 4. Start Temporal developer server (Docker Compose or standalone) and configure the worker modules: `mvn -pl scan-worker-workflow quarkus:dev` plus the light/filter/opengrep workers.
@@ -31,4 +31,4 @@
 5. Monitor the `/health` endpoints and Temporal UI; rotate certificates by replacing the Secrets and restarting pods as needed.
 
 ## Notes
-- Quarkus integration tests for the triage service are skipped on Java 25 due to Quarkus/ASM limitations. Run them on Java 21 or upgrade Quarkus if you need full test coverage.
+- Java 17 is the compiler, test, CI, container-build, and production runtime baseline. Core triage tests are part of the normal reactor and must not be skipped.

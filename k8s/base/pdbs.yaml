@@ -1,0 +1,29 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: scan-api}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: scan-api}}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: triage-service}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: triage-service}}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: scan-worker-workflow}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: scan-worker-workflow}}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: scan-worker-light}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: scan-worker-light}}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: scan-worker-filter}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: scan-worker-filter}}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: scan-worker-opengrep}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: scan-worker-opengrep}}}

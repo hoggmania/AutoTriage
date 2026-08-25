@@ -2,7 +2,7 @@
 FROM maven:3.9.4-eclipse-temurin-17 AS build
 WORKDIR /workspace
 COPY . .
-RUN mvn -pl suppression-service-mock -am clean package -DskipTests
+RUN mvn -B -pl suppression-service-mock -am clean package
 
 FROM eclipse-temurin:17-jdk
 WORKDIR /app

@@ -68,8 +68,8 @@ Default policy bands described in project docs:
 
 Prerequisites:
 
-- JDK 25
-- Maven
+- JDK 17
+- Maven 3.9 or newer
 - Temporal (dev server or cluster)
 - Git CLI
 - Optional: Postgres (for triage service), OpenGrep binary/config, LLM provider config
@@ -90,6 +90,12 @@ Typical startup sequence:
 4. Optional suppression ingest mock:
    - `mvn -pl suppression-service-mock quarkus:dev`
 5. Submit scans to `scan-api` and monitor status via `/scans/{runId}` and Temporal UI.
+
+Run the complete Java 17 verification suite from the repository root with:
+
+```bash
+mvn -B verify
+```
 
 For containerized local run, use:
 
@@ -134,3 +140,7 @@ Triage:
 - `docs/runbook.md`
 - `docs/triage-plan.md`
 - `docs/decisions/decision-log.md`
+
+## License
+
+AutoTriage is licensed under the [MIT License](LICENSE).

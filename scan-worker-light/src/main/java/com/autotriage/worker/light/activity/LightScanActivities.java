@@ -1,6 +1,9 @@
 package com.autotriage.worker.light.activity;
 
 import com.autotriage.common.activity.ScanActivities;
+import com.autotriage.common.artifact.ArtifactContent;
+import com.autotriage.common.artifact.ArtifactStore;
+import com.autotriage.artifact.s3.S3ArtifactStore;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanState;
@@ -44,7 +47,21 @@ public class LightScanActivities implements ScanActivities {
     private static final Logger log = Logger.getLogger(LightScanActivities.class);
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(2);
-    private static final SuppressionSignatureVerifier signatureVerifier = new ConfigurableSuppressionSignatureVerifier();
+    private final ArtifactStore artifactStore;
+    private final SuppressionSignatureVerifier signatureVerifier;
+
+    public LightScanActivities() {
+        this(S3ArtifactStore.fromEnvironment());
+    }
+
+    public LightScanActivities(ArtifactStore artifactStore) {
+        this(artifactStore, new ConfigurableSuppressionSignatureVerifier());
+    }
+
+    public LightScanActivities(ArtifactStore artifactStore, SuppressionSignatureVerifier signatureVerifier) {
+        this.artifactStore = java.util.Objects.requireNonNull(artifactStore, "artifactStore");
+        this.signatureVerifier = java.util.Objects.requireNonNull(signatureVerifier, "signatureVerifier");
+    }
 
     @Override
     public ArtifactRef resolveRepoSource(ScanRequest request) {
@@ -53,11 +70,10 @@ public class LightScanActivities implements ScanActivities {
         try {
             workspace = Files.createTempDirectory("autotriage-source-");
             cloneRepo(request.getRepository(), request.getCommitSha(), workspace);
-            Path artifactsDir = resolveArtifactsDir();
-            Files.createDirectories(artifactsDir);
-            Path archivePath = artifactsDir.resolve("source-" + request.getRunId() + ".tar.gz");
+            Path archivePath = Files.createTempFile(workspace.getParent(), "source-", ".tar.gz");
             createTarGzArchive(workspace, archivePath);
-            return new ArtifactRef(archivePath.toUri().toString(), "source-archive");
+            return artifactStore.put(new ArtifactContent(Files.readAllBytes(archivePath), "source-archive",
+                    "application/gzip", request.getRunId(), "light"));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to resolve repository source", e);
         } finally {
@@ -91,11 +107,16 @@ public class LightScanActivities implements ScanActivities {
         if (bundle.getUri().startsWith("none://")) {
             return false;
         }
-        Path bundlePath = resolveBundlePath(bundle.getUri());
-        if (bundlePath == null) {
+        Path tempDir = null;
+        try {
+            tempDir = Files.createTempDirectory("autotriage-signature-");
+            Path bundlePath = artifactStore.materialize(bundle, tempDir, "suppressions.tar.gz");
+            return signatureVerifier.verify(bundlePath);
+        } catch (Exception e) {
             return false;
+        } finally {
+            if (tempDir != null) deleteRecursively(tempDir);
         }
-        return signatureVerifier.verify(bundlePath);
     }
 
     @Override
@@ -147,7 +168,8 @@ public class LightScanActivities implements ScanActivities {
     public ScanStatus computeVerdict(String runId, ArtifactRef finalSarif) {
         log.infov("computeVerdict runId={0} finalUri={1}", runId, finalSarif.getUri());
         try {
-            Path sarifPath = resolveFilePath(finalSarif.getUri());
+            Path tempDir = Files.createTempDirectory("autotriage-verdict-");
+            Path sarifPath = artifactStore.materialize(finalSarif, tempDir, "final.sarif");
             JsonNode sarif = mapper.readTree(Files.readString(sarifPath, StandardCharsets.UTF_8));
             JsonNode results = sarif.at("/runs/0/results");
             int high = 0;
@@ -172,7 +194,9 @@ public class LightScanActivities implements ScanActivities {
                     medium,
                     low,
                     policy.describe());
-            return new ScanStatus(runId, ScanState.COMPLETED, message);
+            ScanStatus status = new ScanStatus(runId, ScanState.COMPLETED, message);
+            deleteRecursively(tempDir);
+            return status;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to compute verdict", e);
         }
@@ -224,20 +248,6 @@ public class LightScanActivities implements ScanActivities {
         return value.replaceAll("https://[^:@\\s]+:[^@\\s]+@", "https://***:***@");
     }
 
-    private Path resolveArtifactsDir() {
-        String dir = ConfigProvider.getConfig()
-                .getOptionalValue("artifacts.dir", String.class)
-                .orElse("artifacts");
-        return Path.of(dir);
-    }
-
-    private Path resolveFilePath(String uri) {
-        URI sourceUri = URI.create(uri);
-        if (!"file".equalsIgnoreCase(sourceUri.getScheme())) {
-            throw new IllegalArgumentException("Only file:// artifacts are supported in this phase");
-        }
-        return Path.of(sourceUri);
-    }
 
     private void createTarGzArchive(Path sourceDir, Path outputFile) throws IOException {
         // Create a tar.gz archive while skipping the VCS metadata.
@@ -297,17 +307,6 @@ public class LightScanActivities implements ScanActivities {
         }
     }
 
-    private Path resolveBundlePath(String uri) {
-        try {
-            URI bundleUri = URI.create(uri);
-            if (!"file".equalsIgnoreCase(bundleUri.getScheme())) {
-                return null;
-            }
-            return Path.of(bundleUri);
-        } catch (Exception e) {
-            return null;
-        }
-    }
 
     private String sanitizeRef(String ref) {
         if (ref == null || ref.isBlank()) {
@@ -328,12 +327,11 @@ public class LightScanActivities implements ScanActivities {
             if (!Files.exists(suppressionsDir) || !Files.isDirectory(suppressionsDir)) {
                 return null;
             }
-            Path artifactsDir = resolveArtifactsDir();
-            Files.createDirectories(artifactsDir);
-            String safeRef = sanitizeRef(ref);
-            Path archivePath = artifactsDir.resolve("suppressions-" + safeRef + ".tar.gz");
+            Path archivePath = Files.createTempFile(workspace.getParent(), "suppressions-", ".tar.gz");
             createTarGzArchive(suppressionsDir, archivePath);
-            return new SuppressionBundle(new ArtifactRef(archivePath.toUri().toString(), "suppression-bundle"), source);
+            ArtifactRef stored = artifactStore.put(new ArtifactContent(Files.readAllBytes(archivePath),
+                    "suppression-bundle", "application/gzip", sanitizeRef(ref), "light"));
+            return new SuppressionBundle(stored, source);
         } finally {
             if (workspace != null) {
                 deleteRecursively(workspace);

@@ -20,5 +20,13 @@ jobs:
           java-version: 17
           cache: maven
 
-      - name: Build and test modules
-        run: mvn -B -pl scan-common,scan-api,scan-worker-workflow,scan-worker-light,scan-worker-filter,scan-worker-opengrep,triage-service,suppression-service-mock -am verify
+      - name: Verify MIT license
+        run: |
+          test -f LICENSE
+          grep -Fq "Permission is hereby granted, free of charge" LICENSE
+
+      - name: Show Maven toolchain
+        run: mvn --version
+
+      - name: Build and test reactor
+        run: mvn -B verify

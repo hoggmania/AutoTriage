@@ -102,33 +102,21 @@ public class ZeroFalseContextBuilder {
     }
 
     private Path resolveArtifactPath(Path sourceRoot, JsonNode runNode, String uri, String baseId) {
-        if (uri == null || uri.isBlank()) {
+        if (sourceRoot == null || uri == null || uri.isBlank()) {
             return null;
         }
-        if (uri.startsWith("file:")) {
-            try {
-                return Path.of(URI.create(uri));
-            } catch (Exception ignored) {
-                return null;
-            }
-        }
-        String baseUri = null;
-        if (baseId != null && runNode != null) {
-            baseUri = runNode.path("originalUriBaseIds").path(baseId).path("uri").asText(null);
-        }
-        if (baseUri != null && !baseUri.isBlank()) {
-            try {
-                Path basePath = baseUri.startsWith("file:") ? Path.of(URI.create(baseUri)) : Path.of(baseUri);
-                return basePath.resolve(uri).normalize();
-            } catch (Exception ignored) {
-                return null;
-            }
-        }
-        if (sourceRoot != null) {
-            return sourceRoot.resolve(uri).normalize();
-        }
         try {
-            return Path.of(uri);
+            URI parsed = URI.create(uri);
+            if (parsed.isAbsolute()) {
+                return null;
+            }
+            Path relative = Path.of(uri);
+            if (relative.isAbsolute()) {
+                return null;
+            }
+            Path normalizedRoot = sourceRoot.toAbsolutePath().normalize();
+            Path resolved = normalizedRoot.resolve(relative).normalize();
+            return resolved.startsWith(normalizedRoot) ? resolved : null;
         } catch (Exception ignored) {
             return null;
         }

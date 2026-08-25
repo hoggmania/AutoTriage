@@ -1,6 +1,7 @@
 package com.autotriage.triage.policy;
 
 import com.autotriage.common.model.TriageClassification;
+import com.autotriage.common.evidence.TriageEvidence;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.ConfigProvider;
@@ -26,17 +27,17 @@ public class TriagePolicyService {
         this.evaluator = evaluator;
     }
 
-    public TriageClassification classify(String repository, String cweId, Integer confidencePercent) {
-        if (confidencePercent == null) {
+    public TriageClassification classify(String repository, String cweId, TriageEvidence evidence) {
+        if (evidence == null || !evidence.getProvenance().isCompleteForPolicy()) {
             return TriageClassification.TRUE_POSITIVE;
         }
         String policy = loadPolicy(repository);
-        String result = evaluator.evaluate(policy, cweId, confidencePercent);
+        String result = evaluator.evaluate(policy, cweId, evidence);
         TriageClassification classification = mapClassification(result);
         if (classification != null) {
             return classification;
         }
-        return defaultClassification(confidencePercent);
+        return defaultClassification(evidence);
     }
 
     private String loadPolicy(String repository) {
@@ -63,9 +64,8 @@ public class TriagePolicyService {
     }
 
     private String defaultPolicy() {
-        return "confidencePercent <= 30 ? \"TRUE_POSITIVE\" : "
-                + "confidencePercent <= 60 ? \"POTENTIAL_FALSE_POSITIVE\" : "
-                + "\"FALSE_POSITIVE\"";
+        return "evidence.level == 'STRONG' ? 'FALSE_POSITIVE' : "
+                + "evidence.level == 'MODERATE' ? 'POTENTIAL_FALSE_POSITIVE' : 'TRUE_POSITIVE'";
     }
 
     private TriageClassification mapClassification(String value) {
@@ -81,14 +81,12 @@ public class TriagePolicyService {
         };
     }
 
-    private TriageClassification defaultClassification(int confidencePercent) {
-        if (confidencePercent <= 30) {
-            return TriageClassification.TRUE_POSITIVE;
-        }
-        if (confidencePercent <= 60) {
-            return TriageClassification.POTENTIAL_FALSE_POSITIVE;
-        }
-        return TriageClassification.FALSE_POSITIVE;
+    private TriageClassification defaultClassification(TriageEvidence evidence) {
+        return switch (evidence.getCalibratedLevel()) {
+            case STRONG -> TriageClassification.FALSE_POSITIVE;
+            case MODERATE -> TriageClassification.POTENTIAL_FALSE_POSITIVE;
+            case LIMITED, INSUFFICIENT -> TriageClassification.TRUE_POSITIVE;
+        };
     }
 
     private record CachedPolicy(String policy, Instant loadedAt, Duration ttl) {

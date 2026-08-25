@@ -1,6 +1,13 @@
 package com.autotriage.worker.opengrep.activity;
 
 import com.autotriage.common.activity.ScanActivities;
+import com.autotriage.common.artifact.ArtifactContent;
+import com.autotriage.common.artifact.ArtifactStore;
+import com.autotriage.artifact.s3.S3ArtifactStore;
+import com.autotriage.common.engine.AnalysisEngine;
+import com.autotriage.common.engine.EngineDescriptor;
+import com.autotriage.common.engine.EngineRequest;
+import com.autotriage.common.engine.EngineResult;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanStatus;
@@ -24,14 +31,40 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-public class OpenGrepScanActivities implements ScanActivities {
+public class OpenGrepScanActivities implements ScanActivities, AnalysisEngine {
 
     private static final Logger log = Logger.getLogger(OpenGrepScanActivities.class);
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final long MAX_ENTRY_BYTES = 100L * 1024 * 1024;
+    private static final long MAX_EXPANDED_BYTES = 2L * 1024 * 1024 * 1024;
+    private static final EngineDescriptor DESCRIPTOR = new EngineDescriptor(
+            "opengrep", "1", Set.of("source-archive"), Set.of("sarif-raw"));
+    private final ArtifactStore artifactStore;
+
+    public OpenGrepScanActivities() { this(S3ArtifactStore.fromEnvironment()); }
+
+    public OpenGrepScanActivities(ArtifactStore artifactStore) {
+        this.artifactStore = java.util.Objects.requireNonNull(artifactStore, "artifactStore");
+    }
+
+    @Override
+    public EngineDescriptor descriptor() {
+        return DESCRIPTOR;
+    }
+
+    @Override
+    public EngineResult analyze(EngineRequest request) {
+        ArtifactRef output = runOpenGrep(request.getSource(), request.getRunId());
+        return new EngineResult(DESCRIPTOR.getId(), DESCRIPTOR.getVersion(), List.of(output), List.of());
+    }
 
     @Override
     public ArtifactRef resolveRepoSource(ScanRequest request) {
@@ -54,13 +87,14 @@ public class OpenGrepScanActivities implements ScanActivities {
         Path workspace = null;
         try {
             workspace = Files.createTempDirectory("autotriage-opengrep-");
-            Path sourceArchive = resolveSourceArchive(source.getUri());
+            Path sourceArchive = artifactStore.materialize(source, workspace, "source.tar.gz");
             extractTarGz(sourceArchive, workspace);
-            Path artifactsDir = resolveArtifactsDir();
-            Files.createDirectories(artifactsDir);
-            Path sarifPath = artifactsDir.resolve("raw-" + runId + ".sarif");
-            runOpenGrepCommand(workspace, sarifPath);
-            return new ArtifactRef(sarifPath.toUri().toString(), "sarif-raw");
+            Files.delete(sourceArchive);
+            Path outputDirectory = Files.createDirectory(workspace.resolve(".autotriage-output"));
+            Path sarifPath = outputDirectory.resolve("raw.sarif");
+            runOpenGrepCommand(workspace, outputDirectory, sarifPath);
+            return artifactStore.put(new ArtifactContent(Files.readAllBytes(sarifPath), "sarif-raw",
+                    "application/sarif+json", runId, "opengrep"));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to run OpenGrep", e);
         } finally {
@@ -88,22 +122,9 @@ public class OpenGrepScanActivities implements ScanActivities {
         throw new UnsupportedOperationException("computeVerdict is handled by light worker");
     }
 
-    private Path resolveSourceArchive(String uri) {
-        URI sourceUri = URI.create(uri);
-        if (!"file".equalsIgnoreCase(sourceUri.getScheme())) {
-            throw new IllegalArgumentException("Only file:// source archives are supported in this phase");
-        }
-        return Path.of(sourceUri);
-    }
 
-    private Path resolveArtifactsDir() {
-        String dir = ConfigProvider.getConfig()
-                .getOptionalValue("artifacts.dir", String.class)
-                .orElse("artifacts");
-        return Path.of(dir);
-    }
-
-    private void runOpenGrepCommand(Path workspace, Path sarifPath) throws IOException, InterruptedException {
+    private void runOpenGrepCommand(Path workspace, Path outputDirectory, Path sarifPath)
+            throws IOException, InterruptedException {
         Optional<String> binary = ConfigProvider.getConfig().getOptionalValue("opengrep.bin", String.class)
                 .filter(value -> !value.isBlank());
         Optional<String> config = ConfigProvider.getConfig().getOptionalValue("opengrep.config", String.class)
@@ -111,13 +132,45 @@ public class OpenGrepScanActivities implements ScanActivities {
         if (binary.isEmpty() || config.isEmpty()) {
             throw new IllegalStateException("OpenGrep binary/config not configured; refusing to produce a clean stub result");
         }
-        String[] command = new String[] {
-                binary.get(),
-                "--config", config.get(),
+        String sandbox = ConfigProvider.getConfig()
+                .getOptionalValue("sandbox.bin", String.class).filter(value -> !value.isBlank())
+                .orElse("/usr/bin/bwrap");
+        Path sandboxPath = Path.of(sandbox);
+        if (!sandboxPath.isAbsolute() || !Files.isExecutable(sandboxPath)) {
+            throw new IllegalStateException("Sandbox executable is unavailable; refusing unsandboxed analysis");
+        }
+        Path enginePath = Path.of(binary.get());
+        Path configPath = Path.of(config.get());
+        if (!enginePath.isAbsolute() || !configPath.isAbsolute()) {
+            throw new IllegalStateException("OpenGrep binary and config must be absolute paths");
+        }
+        List<String> command = new ArrayList<>(List.of(
+                sandbox,
+                "--unshare-all",
+                "--die-with-parent",
+                "--new-session",
+                "--clearenv",
+                "--proc", "/proc",
+                "--dev", "/dev",
+                "--tmpfs", "/tmp"));
+        for (String systemPath : List.of("/usr", "/bin", "/lib", "/lib64")) {
+            if (Files.exists(Path.of(systemPath))) {
+                command.addAll(List.of("--ro-bind", systemPath, systemPath));
+            }
+        }
+        command.addAll(List.of(
+                "--ro-bind", enginePath.toString(), "/autotriage-engine",
+                "--ro-bind", configPath.toString(), "/autotriage-rules",
+                "--ro-bind", workspace.toString(), "/workspace",
+                "--bind", outputDirectory.toString(), "/output",
+                "--setenv", "HOME", "/tmp",
+                "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
+                "--chdir", "/workspace",
+                "/autotriage-engine",
+                "--config", "/autotriage-rules",
                 "--sarif",
-                "--output", sarifPath.toString(),
-                workspace.toString()
-        };
+                "--output", "/output/raw.sarif",
+                "/workspace"));
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         Process process = builder.start();
@@ -152,7 +205,7 @@ public class OpenGrepScanActivities implements ScanActivities {
     private void heartbeat(String detail) {
         try {
             Activity.getExecutionContext().heartbeat(detail);
-        } catch (RuntimeException ignored) {
+        } catch (IllegalStateException ignored) {
             // Unit tests may invoke this activity outside a Temporal activity context.
         }
     }
@@ -163,10 +216,26 @@ public class OpenGrepScanActivities implements ScanActivities {
              GzipCompressorInputStream gzipIn = new GzipCompressorInputStream(buffered);
              TarArchiveInputStream tarIn = new TarArchiveInputStream(gzipIn)) {
             TarArchiveEntry entry;
+            int entries = 0;
+            long expandedBytes = 0;
             while ((entry = tarIn.getNextEntry()) != null) {
+                if (++entries > MAX_ARCHIVE_ENTRIES) {
+                    throw new IOException("Source archive has too many entries");
+                }
+                if (entry.isSymbolicLink() || entry.isLink() || entry.isCharacterDevice()
+                        || entry.isBlockDevice() || entry.isFIFO()) {
+                    throw new IOException("Source archive contains unsupported link or device entry");
+                }
+                if (entry.getSize() > MAX_ENTRY_BYTES || entry.getSize() < 0) {
+                    throw new IOException("Source archive entry exceeds size limit");
+                }
+                expandedBytes = Math.addExact(expandedBytes, entry.getSize());
+                if (expandedBytes > MAX_EXPANDED_BYTES) {
+                    throw new IOException("Source archive exceeds expanded size limit");
+                }
                 Path target = destDir.resolve(entry.getName()).normalize();
                 if (!target.startsWith(destDir)) {
-                    continue;
+                    throw new IOException("Source archive entry escapes extraction root");
                 }
                 if (entry.isDirectory()) {
                     Files.createDirectories(target);

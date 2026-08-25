@@ -1,6 +1,8 @@
 package com.autotriage.worker.light.activity;
 
 import com.autotriage.common.model.ArtifactRef;
+import com.autotriage.common.artifact.ArtifactContent;
+import com.autotriage.test.TestArtifactStore;
 import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +25,7 @@ class LightScanActivitiesTest {
 
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final Path tempRoot = createTempRoot();
+    private static final TestArtifactStore artifactStore = new TestArtifactStore();
 
     @AfterAll
     static void cleanup() throws IOException {
@@ -39,8 +42,10 @@ class LightScanActivitiesTest {
         results.add(createResult("error", null));
         writeSarif(sarifPath, results);
 
-        LightScanActivities activities = new LightScanActivities();
-        ScanStatus status = activities.computeVerdict("run-1", new ArtifactRef(sarifPath.toUri().toString(), "sarif-final"));
+        LightScanActivities activities = new LightScanActivities(artifactStore);
+        ArtifactRef ref = artifactStore.put(new ArtifactContent(Files.readAllBytes(sarifPath), "sarif-final",
+                "application/sarif+json", "run-1", "test"));
+        ScanStatus status = activities.computeVerdict("run-1", ref);
 
         assertEquals(ScanState.COMPLETED, status.getState());
         assertTrue(status.getMessage().contains("Verdict: FAIL"));
@@ -55,8 +60,10 @@ class LightScanActivitiesTest {
         results.add(createResult("note", "MEDIUM"));
         writeSarif(sarifPath, results);
 
-        LightScanActivities activities = new LightScanActivities();
-        ScanStatus status = activities.computeVerdict("run-2", new ArtifactRef(sarifPath.toUri().toString(), "sarif-final"));
+        LightScanActivities activities = new LightScanActivities(artifactStore);
+        ArtifactRef ref = artifactStore.put(new ArtifactContent(Files.readAllBytes(sarifPath), "sarif-final",
+                "application/sarif+json", "run-2", "test"));
+        ScanStatus status = activities.computeVerdict("run-2", ref);
 
         assertEquals(ScanState.COMPLETED, status.getState());
         assertTrue(status.getMessage().contains("Verdict: PASS"));
@@ -89,7 +96,7 @@ class LightScanActivitiesTest {
     private static String invokeBuildCloneUrl(String repository) throws Exception {
         Method method = LightScanActivities.class.getDeclaredMethod("buildCloneUrl", String.class);
         method.setAccessible(true);
-        return (String) method.invoke(new LightScanActivities(), repository);
+        return (String) method.invoke(new LightScanActivities(artifactStore), repository);
     }
 
     private static void setGatePolicy(String failOnAny, String maxHigh, String maxMedium, String maxLow) {

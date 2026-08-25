@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: autotriage-dev
+resources:
+  - ../../base
+labels:
+  - pairs: {app.kubernetes.io/environment: dev}
+    includeSelectors: false
+images:
+  - {name: autotriage/scan-api, newTag: dev}
+  - {name: autotriage/triage-service, newTag: dev}
+  - {name: autotriage/scan-worker-workflow, newTag: dev}
+  - {name: autotriage/scan-worker-light, newTag: dev}
+  - {name: autotriage/scan-worker-filter, newTag: dev}
+  - {name: autotriage/scan-worker-opengrep, newTag: dev}
+secretGenerator:
+  - name: autotriage-runtime
+    literals:
+      - DB_USER=autotriage
+      - DB_PASSWORD=autotriage-dev-only
+      - S3_ACCESS_KEY=autotriage-dev
+      - S3_SECRET_KEY=autotriage-dev-only-change-me
+      - AWS_ACCESS_KEY_ID=autotriage-dev
+      - AWS_SECRET_ACCESS_KEY=autotriage-dev-only-change-me
+      - TRIAGE_INGEST_TOKEN=autotriage-dev-only
+generatorOptions: {disableNameSuffixHash: true}
+patches:
+  - target:
+      kind: Namespace
+      name: autotriage
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: autotriage-dev
+  - path: replicas.yaml
+  - path: configmap.yaml
+  - target:
+      group: policy
+      version: v1
+      kind: PodDisruptionBudget
+      name: "scan-api|triage-service|scan-worker-.*"
+    path: remove-pdbs.yaml

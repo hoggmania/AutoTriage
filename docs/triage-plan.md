@@ -14,7 +14,7 @@ We will add a triage workflow that persists low-confidence findings, classifies 
 - [x] Build JWT-secured Swagger APIs for listing/claiming/approving/denying findings and querying audits by repo, enforcing `role=security:vuln_assessor:triager`.
 - [x] Build a minimal Security Role UI to claim triage, approve/deny per commit, and view confidence + classification + PR state.
 - [x] Implement Git-over-HTTPS suppression updates: append suppression entries under `.opengrep/suppressions/*.yaml`, write a `.sig` placeholder, push a branch, and optionally format PR URLs via `TRIAGE_PR_URL_TEMPLATE`; log audit entries.
-- [x] Add tests: CEL policy unit tests plus Quarkus tests for candidate ingest, approval flow, and JWT auth (H2-backed; Quarkus tests are skipped on Java 25).
+- [x] Add tests: CEL policy unit tests plus Quarkus tests for candidate ingest, approval flow, and JWT auth (H2-backed and executed on the Java 17 project baseline).
 - [x] Update `docs/architecture.md`, `docs/runbook.md`, and the decision log to reflect the triage service, CEL policy, and JWT requirements.
 
 ## Implementation notes

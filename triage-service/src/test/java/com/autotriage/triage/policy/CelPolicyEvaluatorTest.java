@@ -1,20 +1,46 @@
 package com.autotriage.triage.policy;
 
+import com.autotriage.common.evidence.EvidenceCalibration;
+import com.autotriage.common.evidence.EvidenceLevel;
+import com.autotriage.common.evidence.EvidenceProvenance;
+import com.autotriage.common.evidence.TriageEvidence;
+import com.autotriage.common.evidence.ZeroFalseSignals;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class CelPolicyEvaluatorTest {
 
     @Test
-    void evaluatesThresholdPolicy() {
+    void evaluatesStructuredEvidenceAndProvenance() {
         CelPolicyEvaluator evaluator = new CelPolicyEvaluator();
-        String policy = "confidencePercent <= 30 ? \"TRUE_POSITIVE\" : "
-                + "confidencePercent <= 60 ? \"POTENTIAL_FALSE_POSITIVE\" : "
-                + "\"FALSE_POSITIVE\"";
+        String policy = "evidence.level == 'STRONG' && provenance.engineId == 'zerofalse' "
+                + "? 'FALSE_POSITIVE' : 'TRUE_POSITIVE'";
 
-        assertEquals("TRUE_POSITIVE", evaluator.evaluate(policy, "CWE-079", 10));
-        assertEquals("POTENTIAL_FALSE_POSITIVE", evaluator.evaluate(policy, "CWE-079", 55));
-        assertEquals("FALSE_POSITIVE", evaluator.evaluate(policy, "CWE-079", 90));
+        assertEquals("FALSE_POSITIVE", evaluator.evaluate(policy, "CWE-079", evidence(EvidenceLevel.STRONG)));
+        assertEquals("TRUE_POSITIVE", evaluator.evaluate(policy, "CWE-079", evidence(EvidenceLevel.LIMITED)));
+    }
+
+    @Test
+    void legacyConfidenceIsNotAvailableAsPolicyInput() {
+        CelPolicyEvaluator evaluator = new CelPolicyEvaluator();
+
+        assertNull(evaluator.evaluate(
+                "confidencePercent > 0 ? 'FALSE_POSITIVE' : 'TRUE_POSITIVE'",
+                "CWE-079",
+                evidence(EvidenceLevel.INSUFFICIENT)));
+    }
+
+    private static TriageEvidence evidence(EvidenceLevel level) {
+        return new TriageEvidence(
+                level,
+                new EvidenceCalibration("zerofalse-signals", "1", "conservative-v1", level, 0.99),
+                new EvidenceProvenance(
+                        "zerofalse", "1", "openai", "gpt-4o", "2024-08-06", "optimized",
+                        "a".repeat(64), "b".repeat(64), "c".repeat(64), Instant.parse("2026-08-10T12:00:00Z")),
+                new ZeroFalseSignals(true, "Yes", "No", "high"));
     }
 }

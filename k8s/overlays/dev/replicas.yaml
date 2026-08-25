@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scan-api}
+spec: {replicas: 1}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: triage-service}
+spec: {replicas: 1}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scan-worker-workflow}
+spec: {replicas: 1}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scan-worker-light}
+spec: {replicas: 1}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scan-worker-filter}
+spec: {replicas: 1}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scan-worker-opengrep}
+spec: {replicas: 1}

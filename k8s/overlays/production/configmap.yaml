@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: autotriage-config}
+data:
+  TEMPORAL_TARGET: "temporal.example.internal:7233"
+  TEMPORAL_TLS_ENABLED: "true"
+  DB_HOST: "postgres.example.internal"
+  DB_PORT: "5432"
+  ARTIFACT_S3_ENDPOINT: "https://s3.us-east-1.amazonaws.com"
+  ARTIFACT_S3_REGION: "us-east-1"
+  ARTIFACT_S3_BUCKET: "autotriage-production"
+  ARTIFACT_S3_PATH_STYLE_ACCESS: "false"
+  AWS_ENDPOINT_URL_S3: "https://s3.us-east-1.amazonaws.com"
+  MP_JWT_VERIFY_ISSUER: "https://identity.example.com"

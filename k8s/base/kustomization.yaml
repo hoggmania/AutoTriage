@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: autotriage
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - configmap.yaml
+  - workloads.yaml
+  - postgres.yaml
+  - minio.yaml
+  - runtimeclass.yaml
+  - networkpolicies.yaml
+  - pdbs.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: autotriage

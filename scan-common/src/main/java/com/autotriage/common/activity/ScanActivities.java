@@ -5,7 +5,9 @@ import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.SuppressionApplicationResult;
 import com.autotriage.common.model.ScanStatus;
 import com.autotriage.common.model.SuppressionBundle;
+import io.temporal.activity.ActivityInterface;
 
+@ActivityInterface
 public interface ScanActivities {
 
     ArtifactRef resolveRepoSource(ScanRequest request);

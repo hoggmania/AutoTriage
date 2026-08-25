@@ -1,5 +1,7 @@
 package com.autotriage.worker.opengrep.activity;
 
+import com.autotriage.common.engine.AnalysisEngine;
+import com.autotriage.common.engine.EngineDescriptor;
 import com.autotriage.common.model.ArtifactRef;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -14,6 +16,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -37,6 +41,19 @@ class OpenGrepScanActivitiesTest {
                         }
                     });
         }
+    }
+
+    @Test
+    void exposesOpenGrepThroughStableAnalysisEngineDescriptor() {
+        OpenGrepScanActivities activities = new OpenGrepScanActivities();
+
+        AnalysisEngine engine = assertInstanceOf(AnalysisEngine.class, activities);
+        EngineDescriptor descriptor = engine.descriptor();
+
+        assertEquals("opengrep", descriptor.getId());
+        assertEquals("1", descriptor.getVersion());
+        assertEquals(java.util.Set.of("source-archive"), descriptor.getInputKinds());
+        assertEquals(java.util.Set.of("sarif-raw"), descriptor.getOutputKinds());
     }
 
     @Test
