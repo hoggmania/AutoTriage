@@ -1,5 +1,7 @@
 # AutoTriage
 
+![AutoTriage turns security findings into governed decisions](docs/images/autotriage-linkedin-hero.png)
+
 LLM or Agentic Security testing combines context with security issues; this has been highly effective with Models such as Mythos. However, the cost security testing with such LLM's within a CI/Pipeline, comes with several issues: -
 - costly to excute LLM scanning for every build, especially in high build cadence systems
 - delay/blocks build infrastructure (even when LLM execution is separate)
