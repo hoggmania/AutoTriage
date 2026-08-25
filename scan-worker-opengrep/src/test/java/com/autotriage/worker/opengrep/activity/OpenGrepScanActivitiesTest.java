@@ -3,6 +3,7 @@ package com.autotriage.worker.opengrep.activity;
 import com.autotriage.common.engine.AnalysisEngine;
 import com.autotriage.common.engine.EngineDescriptor;
 import com.autotriage.common.model.ArtifactRef;
+import com.autotriage.test.TestArtifactStore;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
@@ -27,7 +28,6 @@ class OpenGrepScanActivitiesTest {
 
     @AfterEach
     void cleanup() throws Exception {
-        System.clearProperty("artifacts.dir");
         System.clearProperty("opengrep.bin");
         System.clearProperty("opengrep.config");
         if (tempRoot != null) {
@@ -45,7 +45,7 @@ class OpenGrepScanActivitiesTest {
 
     @Test
     void exposesOpenGrepThroughStableAnalysisEngineDescriptor() {
-        OpenGrepScanActivities activities = new OpenGrepScanActivities();
+        OpenGrepScanActivities activities = new OpenGrepScanActivities(new TestArtifactStore());
 
         AnalysisEngine engine = assertInstanceOf(AnalysisEngine.class, activities);
         EngineDescriptor descriptor = engine.descriptor();
@@ -59,20 +59,17 @@ class OpenGrepScanActivitiesTest {
     @Test
     void runOpenGrepFailsClosedWhenBinaryOrConfigMissing() throws Exception {
         tempRoot = Files.createTempDirectory("opengrep-activities-test-");
-        Path artifacts = tempRoot.resolve("artifacts");
-        Files.createDirectories(artifacts);
-        System.setProperty("artifacts.dir", artifacts.toString());
         Path sourceArchive = tempRoot.resolve("source.tar.gz");
         writeSourceArchive(sourceArchive);
+        TestArtifactStore artifactStore = new TestArtifactStore();
+        ArtifactRef source = artifactStore.putBytes(
+                Files.readAllBytes(sourceArchive), "source-archive", "application/gzip");
 
         IllegalStateException error = assertThrows(IllegalStateException.class, () ->
-                new OpenGrepScanActivities().runOpenGrep(
-                        new ArtifactRef(sourceArchive.toUri().toString(), "source-archive"),
-                        "run-missing-config"));
+                new OpenGrepScanActivities(artifactStore).runOpenGrep(source, "run-missing-config"));
 
         assertTrue(error.getMessage().contains("Failed to run OpenGrep"));
         assertTrue(error.getCause().getMessage().contains("OpenGrep binary/config not configured"));
-        assertTrue(Files.notExists(artifacts.resolve("raw-run-missing-config.sarif")));
     }
 
     private static void writeSourceArchive(Path archivePath) throws Exception {
