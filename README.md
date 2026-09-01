@@ -60,11 +60,11 @@ Engineering setup, repository structure, local startup, verification, and config
 ## Related Docs
 
 - [`develope.md`](develope.md)
-- `docs/architecture.md`
-- `docs/autotriage-vs-agentic-security-tools.md`
-- `docs/runbook.md`
-- `docs/triage-plan.md`
-- `docs/decisions/decision-log.md`
+- [Architecture](docs/architecture.md)
+- [AutoTriage vs. agentic security tools](docs/autotriage-vs-agentic-security-tools.md)
+- [Runbook](docs/runbook.md)
+- [Triage plan](docs/triage-plan.md)
+- [Decision log](docs/decisions/decision-log.md)
 
 ## License
 
