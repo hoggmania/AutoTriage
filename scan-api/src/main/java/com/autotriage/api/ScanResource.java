@@ -8,6 +8,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -23,8 +24,11 @@ import jakarta.inject.Inject;
 @Path("/scans")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@RolesAllowed(ScanResource.SUBMITTER_ROLE)
 public class ScanResource {
 
+    /** Scan requests make workers clone with the platform token, so only trusted callers may submit them. */
+    public static final String SUBMITTER_ROLE = "security:scan:submitter";
     private static final Logger log = Logger.getLogger(ScanResource.class);
     private static final String TASK_QUEUE = "scan-workflows";
 

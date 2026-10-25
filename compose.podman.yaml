@@ -7,6 +7,8 @@ services:
       - TEMPORAL_TARGET=${TEMPORAL_TARGET:-host.containers.internal:7233}
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-scan-platform}
       - TEMPORAL_TLS_ENABLED=${TEMPORAL_TLS_ENABLED:-false}
+      - MP_JWT_VERIFY_PUBLICKEY_LOCATION=${MP_JWT_VERIFY_PUBLICKEY_LOCATION:-}
+      - MP_JWT_VERIFY_ISSUER=${MP_JWT_VERIFY_ISSUER:-https://autotriage.local}
     ports:
       - "8080:8080"
 
@@ -30,6 +32,7 @@ services:
       - SUPPRESSION_SERVICE_URL=${SUPPRESSION_SERVICE_URL:-http://suppression-service-mock:8090}
       - ARTIFACTS_DIR=/artifacts
       - GIT_CLONE_TOKEN
+      - GIT_CLONE_ALLOWED_HOSTS=${GIT_CLONE_ALLOWED_HOSTS:-github.com}
     volumes:
       - artifacts:/artifacts
     depends_on:
