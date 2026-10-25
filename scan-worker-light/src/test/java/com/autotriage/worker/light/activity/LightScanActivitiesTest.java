@@ -3,22 +3,35 @@ package com.autotriage.worker.light.activity;
 import com.autotriage.common.model.ArtifactRef;
 import com.autotriage.common.artifact.ArtifactContent;
 import com.autotriage.test.TestArtifactStore;
+import com.autotriage.common.model.ScanRequest;
 import com.autotriage.common.model.ScanState;
 import com.autotriage.common.model.ScanStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.temporal.failure.ApplicationFailure;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LightScanActivitiesTest {
@@ -91,6 +104,120 @@ class LightScanActivitiesTest {
         } finally {
             System.clearProperty("git.clone.token");
         }
+    }
+
+    @Test
+    void buildCloneUrl_refusesToSendTokenToUnlistedHost() {
+        System.setProperty("git.clone.token", "secret-token");
+        try {
+            InvocationTargetException thrown = assertThrows(InvocationTargetException.class,
+                    () -> invokeBuildCloneUrl("https://attacker.example/example/repo.git"));
+
+            assertInstanceOf(IllegalArgumentException.class, thrown.getCause());
+            assertFalse(thrown.getCause().getMessage().contains("secret-token"));
+        } finally {
+            System.clearProperty("git.clone.token");
+        }
+    }
+
+    @Test
+    void resolveRepoSource_rejectsLocalRepositoryWithoutRetrying() {
+        LightScanActivities activities = new LightScanActivities(artifactStore);
+        ScanRequest request = new ScanRequest("run-local", "file:///etc", "0123456789abcdef0123456789abcdef01234567",
+                null, null, null);
+
+        ApplicationFailure failure = assertThrows(ApplicationFailure.class, () -> activities.resolveRepoSource(request));
+
+        assertTrue(failure.isNonRetryable());
+        assertEquals("InvalidScanInput", failure.getType());
+    }
+
+    @Test
+    void resolveRepoSource_rejectsOptionLikeCommitSha() {
+        LightScanActivities activities = new LightScanActivities(artifactStore);
+        ScanRequest request = new ScanRequest("run-option", "https://github.com/example/repo.git", "--orphan=evil",
+                null, null, null);
+
+        ApplicationFailure failure = assertThrows(ApplicationFailure.class, () -> activities.resolveRepoSource(request));
+
+        assertTrue(failure.isNonRetryable());
+    }
+
+    @Test
+    void fetchSuppressionBundle_rejectsOptionLikeHeadRefBeforeCloning() {
+        LightScanActivities activities = new LightScanActivities(artifactStore);
+
+        ApplicationFailure failure = assertThrows(ApplicationFailure.class,
+                () -> activities.fetchSuppressionBundle("https://github.com/example/repo.git", "--orphan=evil", "main"));
+
+        assertTrue(failure.isNonRetryable());
+    }
+
+    @Test
+    void gitCommands_separateOptionsFromCallerInput() {
+        Path workspace = tempRoot.resolve("ws");
+
+        List<String> clone = List.of(LightScanActivities.cloneCommand("https://github.com/example/repo.git", workspace));
+        List<String> checkout = List.of(LightScanActivities.checkoutCommand(workspace, "main"));
+
+        assertTrue(clone.contains("protocol.allow=never"));
+        assertTrue(clone.contains("protocol.https.allow=always"));
+        assertFalse(clone.stream().anyMatch(arg -> arg.startsWith("protocol.file") || arg.startsWith("protocol.ext")));
+        assertEquals(clone.indexOf("--") + 1, clone.indexOf("https://github.com/example/repo.git"));
+        assertEquals(checkout.indexOf("--end-of-options") + 1, checkout.indexOf("main"));
+    }
+
+    @Test
+    void createTarGzArchive_doesNotFollowSymlinksOutOfTheRepository() throws Exception {
+        Path outside = Files.createDirectories(tempRoot.resolve("outside"));
+        Path secret = Files.writeString(outside.resolve("token"), "worker-service-account-token");
+        Path repo = Files.createDirectories(tempRoot.resolve("repo-with-symlink"));
+        Files.writeString(repo.resolve("App.java"), "class App {}");
+        createSymlinkOrSkip(repo.resolve("leak.txt"), secret);
+        createSymlinkOrSkip(repo.resolve("leakdir"), outside);
+        Path archive = tempRoot.resolve("repo-with-symlink.tar.gz");
+
+        LightScanActivities.createTarGzArchive(repo, archive);
+
+        Map<String, String> entries = readArchive(archive);
+        assertEquals("class App {}", entries.get("App.java"));
+        assertFalse(entries.containsKey("leak.txt"));
+        assertFalse(entries.keySet().stream().anyMatch(name -> name.startsWith("leakdir")));
+        assertFalse(entries.values().stream().anyMatch(content -> content.contains("worker-service-account-token")));
+    }
+
+    @Test
+    void isInsideWorkspace_rejectsSymlinkedDirectoryPointingOutsideClone() throws Exception {
+        Path outside = Files.createDirectories(tempRoot.resolve("outside-suppressions"));
+        Path workspace = Files.createDirectories(tempRoot.resolve("clone"));
+        Path inside = Files.createDirectories(workspace.resolve("inside"));
+        Path linked = workspace.resolve(".opengrep");
+        createSymlinkOrSkip(linked, outside);
+
+        assertTrue(LightScanActivities.isInsideWorkspace(inside, workspace));
+        assertFalse(LightScanActivities.isInsideWorkspace(linked, workspace));
+    }
+
+    private static void createSymlinkOrSkip(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException e) {
+            // Windows needs Developer Mode or admin rights to create symlinks; CI runs on Linux.
+            Assumptions.abort("Symbolic links are not available: " + e.getMessage());
+        }
+    }
+
+    private static Map<String, String> readArchive(Path archive) throws IOException {
+        Map<String, String> entries = new HashMap<>();
+        try (TarArchiveInputStream tarIn = new TarArchiveInputStream(
+                new GzipCompressorInputStream(Files.newInputStream(archive)))) {
+            TarArchiveEntry entry;
+            while ((entry = tarIn.getNextEntry()) != null) {
+                entries.put(entry.getName(), entry.isDirectory() ? ""
+                        : new String(tarIn.readAllBytes(), StandardCharsets.UTF_8));
+            }
+        }
+        return entries;
     }
 
     private static String invokeBuildCloneUrl(String repository) throws Exception {

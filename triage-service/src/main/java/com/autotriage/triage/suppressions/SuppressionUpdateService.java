@@ -1,7 +1,10 @@
 package com.autotriage.triage.suppressions;
 
+import com.autotriage.common.identity.SignatureEnvelope;
 import com.autotriage.common.identity.SignatureEnvelopeJson;
+import com.autotriage.common.identity.SignatureVerifier;
 import com.autotriage.common.identity.SigningIdentity;
+import com.autotriage.identity.kms.KmsSignatureVerifier;
 import com.autotriage.identity.kms.KmsSigningIdentity;
 import com.autotriage.triage.github.GitHubApiClient;
 import com.autotriage.triage.github.GitHubPullRequest;
@@ -21,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /** Creates suppression changes and real pull requests through the GitHub App REST API. */
@@ -35,16 +39,26 @@ public class SuppressionUpdateService {
 
     private final GitHubApiClient gitHub;
     private final Supplier<SigningIdentity> signingIdentity;
+    private final Supplier<SignatureVerifier> signatureVerifier;
 
     @Inject
     public SuppressionUpdateService(GitHubApiClient gitHub) {
         this.gitHub = java.util.Objects.requireNonNull(gitHub, "gitHub");
         this.signingIdentity = SuppressionUpdateService::configuredSigningIdentity;
+        this.signatureVerifier = SuppressionUpdateService::configuredSignatureVerifier;
     }
 
     SuppressionUpdateService(GitHubApiClient gitHub, SigningIdentity signingIdentity) {
         this.gitHub = gitHub;
         this.signingIdentity = () -> java.util.Objects.requireNonNull(signingIdentity, "signingIdentity");
+        this.signatureVerifier = SuppressionUpdateService::configuredSignatureVerifier;
+    }
+
+    SuppressionUpdateService(GitHubApiClient gitHub, SigningIdentity signingIdentity,
+                             SignatureVerifier signatureVerifier) {
+        this.gitHub = gitHub;
+        this.signingIdentity = () -> java.util.Objects.requireNonNull(signingIdentity, "signingIdentity");
+        this.signatureVerifier = () -> java.util.Objects.requireNonNull(signatureVerifier, "signatureVerifier");
     }
 
     public Optional<SuppressionPrResult> createSuppressionPr(FindingEntity finding) {
@@ -58,6 +72,10 @@ public class SuppressionUpdateService {
             gitHub.ensureBranch(repository, branch);
 
             Optional<GitHubApiClient.RepositoryContent> current = gitHub.readContent(repository, SUPPRESSION_PATH, branch);
+            String signaturePath = SUPPRESSION_PATH + ".sig";
+            Optional<GitHubApiClient.RepositoryContent> currentSignature =
+                    gitHub.readContent(repository, signaturePath, branch);
+            requireTrustedExistingSuppressions(current, currentSignature);
             ArrayNode entries = readSuppressions(current.map(GitHubApiClient.RepositoryContent::content).orElse(""));
             if (!containsFingerprint(entries, finding.fingerprint)) {
                 ObjectNode entry = MAPPER.createObjectNode();
@@ -74,9 +92,6 @@ public class SuppressionUpdateService {
                     new String(canonicalPayload, StandardCharsets.UTF_8),
                     current.map(GitHubApiClient.RepositoryContent::sha).orElse(null));
 
-            String signaturePath = SUPPRESSION_PATH + ".sig";
-            Optional<GitHubApiClient.RepositoryContent> currentSignature =
-                    gitHub.readContent(repository, signaturePath, branch);
             String signatureJson = new String(signed.signatureEnvelope(),
                     StandardCharsets.UTF_8);
             gitHub.updateContent(repository, signaturePath, branch,
@@ -90,6 +105,33 @@ public class SuppressionUpdateService {
         } catch (Exception e) {
             log.warnv("Failed to create suppression PR through GitHub App API: {0}", e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Existing entries are re-signed with the service key, so anything already on the branch must carry a valid
+     * signature from that key. Otherwise anyone who can push to the repository could get arbitrary suppressions
+     * signed by approving a single unrelated finding.
+     */
+    private void requireTrustedExistingSuppressions(Optional<GitHubApiClient.RepositoryContent> current,
+                                                    Optional<GitHubApiClient.RepositoryContent> currentSignature) {
+        String content = current.map(GitHubApiClient.RepositoryContent::content).orElse("");
+        if (content.isBlank()) {
+            return;
+        }
+        String signatureJson = currentSignature.map(GitHubApiClient.RepositoryContent::content).orElse("");
+        if (signatureJson.isBlank()) {
+            throw new IllegalStateException("Existing suppression file is unsigned; refusing to re-sign it");
+        }
+        boolean valid;
+        try {
+            SignatureEnvelope envelope = SignatureEnvelopeJson.read(signatureJson.getBytes(StandardCharsets.UTF_8));
+            valid = signatureVerifier.get().verify(content.getBytes(StandardCharsets.UTF_8), envelope);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Existing suppression signature could not be verified", e);
+        }
+        if (!valid) {
+            throw new IllegalStateException("Existing suppression signature is invalid; refusing to re-sign it");
         }
     }
 
@@ -127,10 +169,17 @@ public class SuppressionUpdateService {
     }
 
     private static SigningIdentity configuredSigningIdentity() {
-        String keyArn = ConfigProvider.getConfig().getOptionalValue(KMS_KEY_ARN_CONFIG, String.class)
+        return KmsSigningIdentity.fromDefaultCredentials(configuredKeyArn(), Map.of("service", "triage-service"));
+    }
+
+    private static SignatureVerifier configuredSignatureVerifier() {
+        return KmsSignatureVerifier.fromDefaultCredentials(Set.of(configuredKeyArn()));
+    }
+
+    private static String configuredKeyArn() {
+        return ConfigProvider.getConfig().getOptionalValue(KMS_KEY_ARN_CONFIG, String.class)
                 .filter(value -> !value.isBlank())
                 .orElseThrow(() -> new IllegalStateException(KMS_KEY_ARN_CONFIG + " is required"));
-        return KmsSigningIdentity.fromDefaultCredentials(keyArn, Map.of("service", "triage-service"));
     }
 
     public record SuppressionPrResult(String branch, long prNumber, String prUrl) {}
