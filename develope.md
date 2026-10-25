@@ -65,6 +65,12 @@ mvn -B verify
 - `TEMPORAL_TLS_ENABLED`
 - `ARTIFACTS_DIR`
 - `GIT_CLONE_TOKEN`
+- `GIT_CLONE_ALLOWED_HOSTS`: comma-separated hosts the light worker may clone from (default `github.com`). Only `https://` and `ssh://`/`git@host:` locations on these hosts are accepted, so the clone token is never sent elsewhere.
+
+### Scan API
+
+- `MP_JWT_VERIFY_PUBLICKEY_LOCATION` or `MP_JWT_VERIFY_PUBLICKEY`, and `MP_JWT_VERIFY_ISSUER`
+- `/scans` callers need a JWT whose `role` claim includes `security:scan:submitter`. `/health` stays unauthenticated.
 
 ### OpenGrep
 

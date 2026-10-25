@@ -14,7 +14,9 @@ import com.autotriage.common.model.SuppressionSource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.autotriage.worker.light.security.ConfigurableSuppressionSignatureVerifier;
+import com.autotriage.worker.light.security.GitInputValidator;
 import com.autotriage.worker.light.security.SuppressionSignatureVerifier;
+import io.temporal.failure.ApplicationFailure;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
@@ -69,11 +71,13 @@ public class LightScanActivities implements ScanActivities {
         Path workspace = null;
         try {
             workspace = Files.createTempDirectory("autotriage-source-");
-            cloneRepo(request.getRepository(), request.getCommitSha(), workspace);
+            cloneRepo(request.getRepository(), GitInputValidator.requireCommitSha(request.getCommitSha()), workspace);
             Path archivePath = Files.createTempFile(workspace.getParent(), "source-", ".tar.gz");
             createTarGzArchive(workspace, archivePath);
             return artifactStore.put(new ArtifactContent(Files.readAllBytes(archivePath), "source-archive",
                     "application/gzip", request.getRunId(), "light"));
+        } catch (IllegalArgumentException e) {
+            throw invalidScanInput(e);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to resolve repository source", e);
         } finally {
@@ -96,6 +100,8 @@ public class LightScanActivities implements ScanActivities {
                 return bundle;
             }
             return SuppressionBundle.none();
+        } catch (IllegalArgumentException e) {
+            throw invalidScanInput(e);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to fetch suppression bundle", e);
         }
@@ -202,13 +208,33 @@ public class LightScanActivities implements ScanActivities {
         }
     }
 
-    private void cloneRepo(String repository, String commitSha, Path workspace) throws IOException, InterruptedException {
+    private void cloneRepo(String repository, String ref, Path workspace) throws IOException, InterruptedException {
         String cloneUrl = buildCloneUrl(repository);
-        runProcess(new String[] {"git", "clone", "--no-checkout", cloneUrl, workspace.toString()});
-        runProcess(new String[] {"git", "-C", workspace.toString(), "checkout", commitSha});
+        String checkoutRef = GitInputValidator.requireRef(ref);
+        runProcess(cloneCommand(cloneUrl, workspace));
+        runProcess(checkoutCommand(workspace, checkoutRef));
+    }
+
+    static String[] cloneCommand(String cloneUrl, Path workspace) {
+        // Only network transports are allowed so a repository value can never reach file://, ext:: or local paths.
+        return new String[] {"git",
+                "-c", "protocol.allow=never",
+                "-c", "protocol.https.allow=always",
+                "-c", "protocol.ssh.allow=always",
+                "clone", "--no-checkout", "--", cloneUrl, workspace.toString()};
+    }
+
+    static String[] checkoutCommand(Path workspace, String ref) {
+        return new String[] {"git", "-C", workspace.toString(), "checkout", "--end-of-options", ref};
+    }
+
+    private static ApplicationFailure invalidScanInput(IllegalArgumentException e) {
+        // Retrying cannot fix a rejected repository or ref, so fail the activity immediately.
+        return ApplicationFailure.newNonRetryableFailureWithCause(e.getMessage(), "InvalidScanInput", e);
     }
 
     private String buildCloneUrl(String repository) {
+        GitInputValidator.requireAllowedRepository(repository);
         Optional<String> token = ConfigProvider.getConfig().getOptionalValue("git.clone.token", String.class);
         if (token.isPresent() && repository.startsWith("https://")) {
             String encodedToken = URLEncoder.encode(token.get(), StandardCharsets.UTF_8)
@@ -249,7 +275,7 @@ public class LightScanActivities implements ScanActivities {
     }
 
 
-    private void createTarGzArchive(Path sourceDir, Path outputFile) throws IOException {
+    static void createTarGzArchive(Path sourceDir, Path outputFile) throws IOException {
         // Create a tar.gz archive while skipping the VCS metadata.
         try (OutputStream fileOut = Files.newOutputStream(outputFile);
              BufferedOutputStream buffered = new BufferedOutputStream(fileOut);
@@ -275,6 +301,12 @@ public class LightScanActivities implements ScanActivities {
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                     Path relative = sourceDir.relativize(file);
                     if (relative.toString().startsWith(".git")) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    if (!attrs.isRegularFile()) {
+                        // Repository content is untrusted: Files.copy would follow a symlink such as
+                        // `x -> /var/run/secrets/...` and archive the worker's own files.
+                        log.warnv("Skipping non-regular file in repository archive: {0}", relative);
                         return FileVisitResult.CONTINUE;
                     }
                     TarArchiveEntry entry = new TarArchiveEntry(file.toFile(), relative.toString());
@@ -327,6 +359,10 @@ public class LightScanActivities implements ScanActivities {
             if (!Files.exists(suppressionsDir) || !Files.isDirectory(suppressionsDir)) {
                 return null;
             }
+            if (!isInsideWorkspace(suppressionsDir, workspace)) {
+                log.warnv("Ignoring suppressions directory that resolves outside the clone for ref {0}", ref);
+                return null;
+            }
             Path archivePath = Files.createTempFile(workspace.getParent(), "suppressions-", ".tar.gz");
             createTarGzArchive(suppressionsDir, archivePath);
             ArtifactRef stored = artifactStore.put(new ArtifactContent(Files.readAllBytes(archivePath),
@@ -337,6 +373,11 @@ public class LightScanActivities implements ScanActivities {
                 deleteRecursively(workspace);
             }
         }
+    }
+
+    static boolean isInsideWorkspace(Path candidate, Path workspace) throws IOException {
+        // A symlinked `.opengrep` or `suppressions` directory would otherwise point the archiver outside the clone.
+        return candidate.toRealPath().startsWith(workspace.toRealPath());
     }
 
     private Severity resolveSeverity(JsonNode result) {
