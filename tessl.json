@@ -1,0 +1,281 @@
+{
+  "name": "skills/autotriage",
+  "dependencies": {},
+  "actions": {
+    "implement": {
+      "tags": [
+        "Ticket to PR"
+      ],
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "skill": "tessl/factory#implement-github-issue",
+      "concurrency": {
+        "keys": [
+          {
+            "key": "implement:github-issue:{{ inputs.GITHUB_ISSUE_NUMBER }}",
+            "limit": 1
+          }
+        ]
+      },
+      "environment": "factory-skills-autotriage-implement"
+    },
+    "shepherd": {
+      "tags": [
+        "Ticket to PR"
+      ],
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "skill": "tessl/factory#shepherd",
+      "concurrency": {
+        "keys": [
+          {
+            "key": "github:pr:{{ inputs.GITHUB_PR_NUMBER }}",
+            "limit": 1
+          }
+        ],
+        "debounce": "90s"
+      },
+      "environment": "factory-skills-autotriage-shepherd"
+    },
+    "follow-ticket-changes": {
+      "tags": [
+        "Ticket to PR"
+      ],
+      "agent": "claude",
+      "model": "claude-haiku-4-5",
+      "skill": "tessl/factory#follow-ticket-changes",
+      "environment": "factory-skills-autotriage-follow-ticket-changes"
+    }
+  },
+  "triggers": {
+    "implement": {
+      "on": [
+        "github:issues.labeled"
+      ],
+      "when": {
+        "event.label.name": "tessl"
+      },
+      "action": {
+        "use": "implement",
+        "inputs": {
+          "GITHUB_ISSUE_LABEL": "tessl",
+          "GITHUB_ISSUE_NUMBER": "{{ event.issue.number }}"
+        }
+      }
+    },
+    "shepherd-pr-review": {
+      "on": [
+        "github:pull_request_review.submitted"
+      ],
+      "when": {
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.pull_request.state": "open",
+        "event.pull_request.head.ref": {
+          "matches": "^tessl/"
+        },
+        "event.pull_request.head.repo.id": 1346038464,
+        "event.pull_request.labels.*.name": {
+          "any": {
+            "equals": "tessl"
+          }
+        }
+      },
+      "action": {
+        "use": "shepherd",
+        "inputs": {
+          "GITHUB_PR_NUMBER": "{{ event.pull_request.number }}"
+        }
+      }
+    },
+    "shepherd-pr-review-comment": {
+      "on": [
+        "github:pull_request_review_comment.created"
+      ],
+      "when": {
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.pull_request.state": "open",
+        "event.pull_request.head.ref": {
+          "matches": "^tessl/"
+        },
+        "event.pull_request.head.repo.id": 1346038464,
+        "event.pull_request.labels.*.name": {
+          "any": {
+            "equals": "tessl"
+          }
+        }
+      },
+      "action": {
+        "use": "shepherd",
+        "inputs": {
+          "GITHUB_PR_NUMBER": "{{ event.pull_request.number }}"
+        }
+      }
+    },
+    "shepherd-pr-comment": {
+      "on": [
+        "github:issue_comment.created"
+      ],
+      "when": {
+        "isPullRequest": "true",
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.issue.state": "open",
+        "event.issue.labels.*.name": {
+          "any": {
+            "equals": "tessl"
+          }
+        }
+      },
+      "action": {
+        "use": "shepherd",
+        "inputs": {
+          "GITHUB_PR_NUMBER": "{{ event.issue.number }}"
+        }
+      }
+    },
+    "follow-ticket-changes-issue-unlabelled": {
+      "on": [
+        "github:issues.unlabeled"
+      ],
+      "when": {
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.label.name": "tessl"
+      },
+      "action": {
+        "use": "follow-ticket-changes",
+        "inputs": {
+          "TICKET_CHANGE": "taken-back",
+          "GITHUB_ISSUE_LABEL": "tessl",
+          "GITHUB_ISSUE_NUMBER": "{{ event.issue.number }}"
+        }
+      },
+      "concurrency": {
+        "keys": [
+          {
+            "key": "follow-ticket-changes:github-issue:{{ inputs.GITHUB_ISSUE_NUMBER }}",
+            "limit": 1
+          }
+        ]
+      }
+    },
+    "follow-ticket-changes-issue-closed": {
+      "on": [
+        "github:issues.closed"
+      ],
+      "when": {
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.issue.labels.*.name": {
+          "any": {
+            "equals": "tessl"
+          }
+        }
+      },
+      "action": {
+        "use": "follow-ticket-changes",
+        "inputs": {
+          "TICKET_CHANGE": "issue-ended",
+          "GITHUB_ISSUE_LABEL": "tessl",
+          "GITHUB_ISSUE_NUMBER": "{{ event.issue.number }}"
+        }
+      },
+      "concurrency": {
+        "keys": [
+          {
+            "key": "follow-ticket-changes:github-issue:{{ inputs.GITHUB_ISSUE_NUMBER }}",
+            "limit": 1
+          }
+        ]
+      }
+    },
+    "follow-ticket-changes-issue-replied": {
+      "on": [
+        "github:issue_comment.created"
+      ],
+      "when": {
+        "isPullRequest": "false",
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.issue.state": "open",
+        "event.issue.labels.*.name": {
+          "any": {
+            "equals": "tessl"
+          }
+        }
+      },
+      "action": {
+        "use": "follow-ticket-changes",
+        "inputs": {
+          "TICKET_CHANGE": "replied",
+          "GITHUB_ISSUE_LABEL": "tessl",
+          "GITHUB_ISSUE_NUMBER": "{{ event.issue.number }}"
+        }
+      },
+      "concurrency": {
+        "keys": [
+          {
+            "key": "implement:github-issue:{{ inputs.GITHUB_ISSUE_NUMBER }}",
+            "limit": 1
+          }
+        ]
+      }
+    },
+    "follow-ticket-changes-pr-closed": {
+      "on": [
+        "github:pull_request.closed"
+      ],
+      "when": {
+        "event.sender.id": {
+          "in": [
+            1778197
+          ]
+        },
+        "event.pull_request.head.ref": {
+          "matches": "^tessl/"
+        },
+        "event.pull_request.labels.*.name": {
+          "any": {
+            "equals": "tessl"
+          }
+        }
+      },
+      "action": {
+        "use": "follow-ticket-changes",
+        "inputs": {
+          "TICKET_CHANGE": "pr-closed",
+          "GITHUB_PR_NUMBER": "{{ event.pull_request.number }}",
+          "GITHUB_ISSUE_LABEL": "tessl"
+        }
+      },
+      "concurrency": {
+        "keys": [
+          {
+            "key": "follow-ticket-changes:github-pr:{{ inputs.GITHUB_PR_NUMBER }}",
+            "limit": 1
+          }
+        ]
+      }
+    }
+  }
+}
