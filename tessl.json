@@ -70,8 +70,7 @@
       "when": {
         "event.sender.id": {
           "in": [
-            1778197,
-            "{{ github.tesslReviewerApp.userId }}"
+            1778197
           ]
         },
         "event.pull_request.state": "open",
